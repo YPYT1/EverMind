@@ -2,19 +2,19 @@
 
 # EverMind
 
-**A local-first AI memory system for coding agents.**
+**Local-first AI Memory OS for Coding Agents**
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
-[![MCP](https://img.shields.io/badge/MCP-ready-6f42c1.svg)](https://modelcontextprotocol.io/)
-[![Windows](https://img.shields.io/badge/Windows-supported-0078D4.svg)](docs/quickstart-windows.md)
-[![macOS](https://img.shields.io/badge/macOS-supported-000000.svg)](docs/quickstart-macos.md)
-[![Local First](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](docs/architecture.md)
-[![GitHub](https://img.shields.io/badge/GitHub-EverMind-181717.svg)](https://github.com/YPYT1/EverMind)
-[![Stars](https://img.shields.io/badge/Stars-welcome-yellow.svg)](https://github.com/YPYT1/EverMind/stargazers)
-[![Issues](https://img.shields.io/badge/Issues-open-blue.svg)](https://github.com/YPYT1/EverMind/issues)
-[![Release](https://img.shields.io/badge/Release-v0.1.0-informational.svg)](https://github.com/YPYT1/EverMind/releases)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange.svg)](https://github.com/YPYT1/EverMind/pulls)
+[![EverMind](https://img.shields.io/badge/EverMind-AI%20Memory%20System-2E86AB?style=flat-square)](https://github.com/YPYT1/EverMind)
+[![Local First](https://img.shields.io/badge/local--first-true-2ECC71?style=flat-square)](docs/architecture.md)
+[![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
+[![AI Agents](https://img.shields.io/badge/AI%20Agents-coding%20ready-F39C12?style=flat-square)](docs/integrations.md)
+[![Memory Runtime](https://img.shields.io/badge/memory-runtime-active-1ABC9C?style=flat-square)](docs/components.md)
+[![Graph Memory](https://img.shields.io/badge/codebase-graph%20memory-34495E?style=flat-square)](docs/components.md)
+[![Skills](https://img.shields.io/badge/skills-engine-supported-E67E22?style=flat-square)](docs/skills.md)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](docs/quickstart-windows.md)
+[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](docs/quickstart-macos.md)
 
 [Quick Start](#quick-start) · [User Journey](docs/user-journey.md) · [MCP Tools](docs/mcp-tools.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) · [中文](README.zh-CN.md)
 
