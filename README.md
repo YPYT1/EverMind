@@ -20,17 +20,15 @@
 
 </div>
 
-EverMind packages the pieces needed to give coding agents durable local memory:
+EverMind packages the pieces a coding agent needs into one system:
 
-- **EverOS** as the local memory runtime.
-- **evermemos MCP** as the bridge for Codex, Claude Code, Cursor, Devin, and other MCP clients.
-- **Basic Memory** as the reviewed Markdown project archive.
-- **codebase-memory-mcp** as the code graph, architecture, call-path, and impact-analysis engine.
-- **Skills** that teach agents how to read, search, and update memory responsibly.
-- **Agent templates** for tool-specific instructions and MCP configuration.
-- **Memory router and write policy templates** for automatic but review-safe persistence.
+- **EverMind Runtime** for local memory retrieval and storage.
+- **EverMind MCP** for Codex, Claude Code, Cursor, Devin, and other MCP clients.
+- **EverMind Skills** for consistent memory-first agent behavior.
+- **EverMind Archive** for reviewed long-term Markdown project notes.
+- **EverMind Code Graph** for repository structure, call-path, and impact analysis.
 
-It is more complete than a plain memory MCP server because it ships the runtime contract, MCP bridge, skill behavior, agent rules, project-note templates, environment examples, and cross-platform checks together.
+Users install one project, run one setup flow, copy one MCP snippet, and then use `briefing`, `recall`, and `remember` from their agent.
 
 ## Quick Start
 
@@ -40,115 +38,70 @@ cd EverMind
 cp .env.example .env
 ```
 
-For the simplest setup, run bootstrap:
+Guided setup:
 
 ```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap.ps1
-```
-
-```bash
-# macOS
-bash scripts/macos/bootstrap.sh
-```
-
-Bootstrap creates local runtime folders, generates `.env`, installs/checks external tools, links skills into user skill folders, generates MCP snippets, and runs checks.
-
-For a guided setup instead:
-
-```powershell
-# Windows
 powershell -ExecutionPolicy Bypass -File scripts/windows/configure.ps1
 ```
 
 ```bash
-# macOS
 bash scripts/macos/configure.sh
 ```
 
-Configure asks for memory paths and model keys, installs skills into your user skill folders, and generates MCP snippets without overwriting existing client configs.
-
-Then fill the model API keys in `.env`.
-
-If you prefer manual steps, run:
-
-For the full integrated stack, use:
+Full bootstrap:
 
 ```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File scripts/windows/install-all.ps1
-powershell -ExecutionPolicy Bypass -File scripts/windows/check-all.ps1
+powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap.ps1
 ```
 
 ```bash
-# macOS
-bash scripts/macos/install-all.sh
-bash scripts/macos/check-all.sh
+bash scripts/macos/bootstrap.sh
 ```
 
-If you only want to validate the EverMind repository skeleton, use:
+Setup creates local runtime folders, generates `.env`, installs user skills, renders MCP snippets into `generated/mcp-config/`, and checks the stack. Existing Codex, Claude Code, Cursor, and Devin configs are not overwritten.
 
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File scripts/windows/check.ps1
-```
-
-```bash
-# macOS
-bash scripts/macos/check.sh
-```
-
-Copy the generated MCP snippet for your tool from `generated/mcp-config/`. Static templates are also available in `templates/mcp-config/`.
-
-The integrated installer also renders ready-to-copy snippets into `generated/mcp-config/`. It does not overwrite your Codex, Claude Code, Cursor, or Devin configuration.
-
-If a template contains placeholders such as `<EVEROS_ROOT>` or `<BASIC_MEMORY_ROOT>`, replace them using [Configuration](docs/configuration.md). In short, `<EVEROS_ROOT>` is the EverOS runtime data directory, for example `D:\EverMindMemory\everos` on Windows or `$HOME/.evermind/everos` on macOS.
-
-`.env.example` is the runtime environment template. It becomes `.env`, which scripts and MCP read at runtime. `config/evermind.example.yaml` is the single human-readable system config reference.
-
-Once connected, ask your coding agent to call:
+Normal MCP client command:
 
 ```text
-briefing(space_id="coding:<your-project>")
-recall(query="project architecture and known pitfalls", space_id="coding:<your-project>")
+uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
 ```
 
-## What Is Included
+## Layout
 
 ```text
-config/       One unified readable config example for the full stack.
-mcp/          The evermemos MCP bridge files directly, without nested project directory.
-skills/       One umbrella skill plus three focused memory skills.
+mcp/          EverMind MCP bridge.
+skills/       EverMind agent skills.
 agents/       Codex, Claude Code, Cursor, and Devin templates.
-templates/    Basic Memory project files and MCP snippets.
-scripts/      Windows/macOS install and check helpers.
-docs/         Architecture, quickstarts, integrations, and troubleshooting.
-third_party.lock.yaml  External component versions and license metadata.
+templates/    Project archive and MCP config templates.
+scripts/      Windows/macOS setup, startup, and check helpers.
+config/       One readable unified config example.
+docs/         Architecture, user journey, integrations, and troubleshooting.
 ```
 
-## Memory Workflow
+`config/evermind.example.yaml` is the human-readable full-system config reference. `.env.example` is the runtime template copied to `.env`; put local paths and API keys there, and do not commit `.env`.
 
-1. **Before work**: load a `briefing`, then use `recall` for project decisions, pitfalls, and configuration.
-2. **During work**: search memory when context is uncertain; verify facts against real files.
-3. **After work**: create a Basic Memory candidate with stable facts and evidence.
-4. **Only after review**: commit the candidate into the official project notes.
+## Workflow
 
-This keeps fast semantic memory separate from reviewed long-term knowledge.
+1. **Before work**: call `briefing` for the project and `recall` for task keywords.
+2. **During work**: write useful live context with `remember`; use EverMind Code Graph for code structure and impact questions.
+3. **After work**: create an EverMind Archive candidate for stable facts, evidence, and validation results.
+4. **After confirmation**: commit the candidate into official project notes only when the user explicitly confirms.
 
-## Safety Defaults
+## Compliance
 
-- Local EverOS API binds to `127.0.0.1` by default.
-- API keys stay in `.env` and are ignored by git.
-- Basic Memory official notes use candidate-first writes.
-- Agent templates tell assistants not to store secrets, tokens, cookies, or private keys.
+EverMind keeps third-party dependency and license information in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [third_party.lock.yaml](third_party.lock.yaml).
 
-See [Security](docs/security.md) before exposing any service beyond loopback.
+## Community and Support
 
-## External Components
+Thanks for supporting EverMind. If this project helps your local AI memory workflow, a star, issue, pull request, or small donation all help keep it moving.
 
-EverMind uses a unified installer instead of vendoring upstream source code.
+<div align="center">
+  <p><strong>Join the EverMind community group</strong></p>
+  <img src="png/EverMind3群.png" alt="EverMind community group QR code" width="260">
+</div>
 
-- Basic Memory: AGPL-3.0, installed with `uv tool install basic-memory==0.22.1`.
-- codebase-memory-mcp: MIT, installed from the pinned GitHub release binary.
-
-See [Components](docs/components.md) and `third_party.lock.yaml`.
+<div align="center">
+  <p><strong>Support the project</strong></p>
+  <img src="png/Alipay.jpg" alt="Alipay support QR code" width="220">
+  <img src="png/wecha.png" alt="WeChat support QR code" width="220">
+</div>
