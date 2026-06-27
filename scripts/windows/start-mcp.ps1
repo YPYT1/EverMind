@@ -9,5 +9,6 @@ if (-not (Test-Path -LiteralPath (Join-Path $mcpRoot "pyproject.toml"))) {
 }
 
 Write-Host "Starting EverMind MCP over stdio from $mcpRoot"
-uv run --directory $mcpRoot evermemos-mcp
+uv run --directory $mcpRoot evermind-mcp
+
 

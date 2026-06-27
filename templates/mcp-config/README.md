@@ -6,7 +6,7 @@ Before using any template, replace the placeholders documented in [Configuration
 
 - `<EVERMIND_ROOT>`
 - `<EVEROS_ROOT>`
-- `<BASIC_MEMORY_ROOT>`
+- `<EVERMIND_ARCHIVE_ROOT>`
 - `<EVEROS_REPO>`
 - `<CODEX_CONFIG_TOML>`
 
@@ -21,12 +21,13 @@ Examples:
 - Windows: `D:\EverMindMemory\everos`
 - macOS: `$HOME/.evermind/everos`
 
-## What `BASIC_MEMORY_ROOT` Means
+## What `EVERMIND_ARCHIVE_ROOT` Means
 
-`BASIC_MEMORY_ROOT` is the reviewed Markdown project archive.
+`EVERMIND_ARCHIVE_ROOT` is the reviewed Markdown project archive.
 
 Examples:
 
-- Windows: `D:\EverMindMemory\basic-memory`
+- Windows: `D:\EverMindMemory\evermind-archive`
 - macOS: `$HOME/BasicMemory`
+
 

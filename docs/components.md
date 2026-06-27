@@ -1,45 +1,71 @@
 # Components
 
-EverMind is a fusion layer. It installs, configures, and checks the memory stack so users do not need to understand every upstream project before getting value.
+EverMind is presented as one local-first memory system with four user-facing components.
 
-## EverOS
+## EverMind Runtime
 
-EverOS is the local runtime for semantic memory, retrieval, indexing, and local storage. It owns the runtime data root configured by `EVEROS_ROOT`.
+EverMind Runtime is the local realtime memory backend. It owns fast project and session recall, local memory files, indexes, and runtime state.
 
-## evermemos MCP
+In the local-first edition this runtime is EverOS-compatible, so existing EverOS deployments can be used as the storage and retrieval engine behind EverMind Runtime.
 
-The MCP bridge exposes memory tools to Codex, Claude Code, Cursor, Devin, and other MCP clients:
+Use it for:
 
-- `briefing`
-- `recall`
-- `remember`
-- `propose_basic_memory_update`
-- `commit_basic_memory_update`
+- session context;
+- project facts that help future recall;
+- user preferences;
+- memory search before and during coding work.
 
-## Basic Memory
+## EverMind MCP
 
-Basic Memory is the reviewed Markdown archive layer. EverMind uses candidate-first writes by default:
+EverMind MCP is the bridge between agents and memory. It lives directly under `mcp/` and exposes the memory tools used by Codex, Claude Code, Cursor, Devin, and other MCP clients.
 
-1. generate a candidate;
-2. user reviews;
-3. official note is committed only after explicit confirmation.
+It is started with:
 
-Basic Memory is AGPL-3.0 and is installed as an external tool, not vendored into EverMind.
+```text
+uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
+```
 
-## codebase-memory-mcp
+Use it for:
 
-codebase-memory-mcp provides code graph indexing, architecture search, call-path tracing, snippet lookup, and change-impact analysis. EverMind installs the pinned release binary and keeps agent configuration under EverMind control.
+- `briefing`;
+- `recall`;
+- `remember`;
+- archive candidate creation;
+- official archive commit after explicit confirmation.
 
-codebase-memory-mcp is MIT licensed and remains an external component.
+## EverMind Archive
 
-## EverMind Orchestration
+EverMind Archive is the reviewed long-term project knowledge layer. It stores durable facts as Markdown so users can read, diff, edit, and back up the knowledge base without a special UI.
 
-EverMind coordinates:
+Use it for:
 
-- external component installation;
-- unified `.env` and MCP snippets;
-- memory routing;
-- write policy;
-- health checks;
-- future local-to-cloud sync policy.
+- architecture decisions;
+- module responsibilities;
+- runtime configuration;
+- interface contracts;
+- test and verification practices;
+- known pitfalls;
+- modification history.
+
+EverMind uses candidate-first writes by default so agents cannot silently pollute official notes.
+
+## EverMind Code Graph
+
+EverMind Code Graph indexes repositories for code-aware memory tasks.
+
+Use it for:
+
+- architecture search;
+- call-path tracing;
+- code search;
+- snippet lookup;
+- change-impact analysis.
+
+The stable conclusions from code graph analysis should be written into EverMind Archive only when they are useful for future work.
+
+## Compliance Boundary
+
+EverMind owns orchestration, installation, configuration, health checks, skills, agent templates, and the branded user experience.
+
+Third-party source, version, and license details are centralized in `THIRD_PARTY_NOTICES.md` and `third_party.lock.yaml`. This keeps the main user path clean while preserving open-source compliance.
 

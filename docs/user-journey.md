@@ -1,62 +1,77 @@
 # User Journey
 
-This is the intended non-expert setup flow.
+This is the intended non-expert flow from download to daily use.
+
+## Goal
+
+A user should be able to:
+
+1. download EverMind;
+2. run one setup command;
+3. paste one MCP snippet into their agent;
+4. ask the agent to start with memory;
+5. receive archive candidates after meaningful work.
+
+They should not need to understand every internal component on day one.
 
 ## 1. Download EverMind
 
 ```bash
-git clone https://github.com/<org>/EverMind.git
+git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
 ```
 
-## 2. Run Bootstrap
+## 2. Configure
 
 Windows:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/bootstrap.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\configure.ps1
 ```
 
 macOS:
 
 ```bash
-bash scripts/macos/bootstrap.sh
-```
-
-Bootstrap:
-
-1. creates local runtime folders;
-2. creates `.env` from `.env.example`;
-3. installs or checks Basic Memory and codebase-memory-mcp;
-4. generates MCP snippets in `generated/mcp-config/`;
-5. links EverMind skills into user skill folders;
-6. runs environment and connectivity checks.
-
-It does not overwrite existing Codex, Claude Code, Cursor, or Devin configs.
-
-If you prefer a guided setup, run the configure script instead:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/configure.ps1
-```
-
-```bash
 bash scripts/macos/configure.sh
 ```
 
-Configure asks for the memory folder and model keys, then creates `.env`, generated MCP snippets, and user skill links. For unattended setup, use `-NonInteractive` on Windows or `NON_INTERACTIVE=1` on macOS.
+Configure asks for:
 
-## 3. Fill Model Keys
+- local memory directory;
+- model API keys, if you want to fill them immediately;
+- whether to install/link user skills.
 
-Open `.env` and fill the model API keys.
+It creates:
 
-`.env.example` is the runtime environment template. It exists because secrets and machine-specific paths should not live in the readable system config.
+- `.env`;
+- local runtime folders;
+- generated MCP snippets;
+- user skill links or copies.
 
-`config/evermind.example.yaml` is the one-file human-readable system configuration reference.
+For a one-command bootstrap with checks:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\bootstrap.ps1
+```
+
+```bash
+bash scripts/macos/bootstrap.sh
+```
+
+## 3. Review `.env`
+
+Open `.env` and check:
+
+- local paths are correct;
+- model keys are filled;
+- `EVERMIND_MCP_BACKEND=everos`;
+- `EVERMIND_ARCHIVE_WRITE_POLICY=candidate`.
+
+`.env.example` exists because runtime processes need environment variables. `config/evermind.example.yaml` exists because humans need a readable full-system reference.
 
 ## 4. Copy One MCP Config
 
-Use the generated file for your tool:
+Use the generated file for your client:
 
 ```text
 generated/mcp-config/codex.toml
@@ -65,41 +80,67 @@ generated/mcp-config/cursor.json
 generated/mcp-config/devin.json
 ```
 
-Do not paste configs that point to an extra nested MCP child directory. EverMind ships the MCP bridge directly under `mcp/`.
+The MCP command should point to:
 
-## 5. Start EverOS
-
-Terminal:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/start-everos.ps1
+```text
+<EVERMIND_ROOT>/mcp
 ```
 
-```bash
-bash scripts/macos/start-everos.sh
+Do not point it to an extra nested MCP child directory.
+
+## 5. Start The Runtime
+
+Start the local runtime before relying on memory search.
+
+Windows terminal:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\start-everos.ps1
 ```
 
 Windows service with NSSM:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/install-everos-nssm.ps1 -NssmPath C:\path\to\nssm.exe -StartNow
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\install-everos-nssm.ps1 -NssmPath C:\path\to\nssm.exe -StartNow
 ```
 
-MCP itself is usually started by the client from MCP config. Manual MCP startup is only for testing.
-
-Manual MCP startup:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/windows/start-mcp.ps1
-```
+macOS:
 
 ```bash
-bash scripts/macos/start-mcp.sh
+bash scripts/macos/start-everos.sh
+```
+
+MCP itself is usually started by the agent client from MCP config.
+
+## 6. Use It In An Agent
+
+At the beginning of work:
+
+```text
+Use EverMind. Start with briefing for this project, then recall known pitfalls.
+```
+
+During work:
+
+```text
+Search EverMind for previous decisions about this module.
+```
+
+After meaningful work:
+
+```text
+Create an EverMind Archive candidate with the stable facts and verification results.
+```
+
+After reviewing a candidate:
+
+```text
+Commit this archive candidate to the official project notes.
 ```
 
 ## Skill Install Locations
 
-EverMind installs skills for the user, not just for this repository:
+EverMind installs skills for the user, not only for this repository:
 
 ```text
 ~/.agents/skills
@@ -109,12 +150,15 @@ EverMind installs skills for the user, not just for this repository:
 
 The setup script links by default and copies when linking is not possible.
 
-## 6. Use It
+## What Success Looks Like
 
-Ask the agent:
+A healthy setup has:
 
-```text
-Use EverMind. Start with briefing for this project, then recall known pitfalls.
-```
+- an `.env` file;
+- generated MCP snippets;
+- skills in user skill folders;
+- local runtime responding on the configured base URL;
+- archive candidate directory created;
+- agent can call `briefing` and `recall`;
+- official archive writes require explicit confirmation.
 
-At the end of meaningful work, the agent should create a Basic Memory candidate, not silently write official notes.

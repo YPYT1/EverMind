@@ -9,9 +9,9 @@ from common import add_project_src_to_path, pp
 
 add_project_src_to_path()
 
-from evermemos_mcp.everos_client import EverOSClient
-from evermemos_mcp.memory_service import MemoryService
-from evermemos_mcp.space_catalog_service import SpaceCatalogService
+from evermind_mcp.everos_client import EverOSClient
+from evermind_mcp.memory_service import MemoryService
+from evermind_mcp.space_catalog_service import SpaceCatalogService
 
 
 async def main() -> int:
@@ -52,7 +52,7 @@ async def main() -> int:
         briefing = await svc.briefing(coding_space, max_items=5)
         pp("briefing", briefing, max_len=1600)
         assert briefing["ok"] is True
-        assert "basic_memory" in briefing
+        assert "archive" in briefing
 
         await svc.remember(
             chat_space,
@@ -74,3 +74,4 @@ async def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(main()))
+

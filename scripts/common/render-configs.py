@@ -27,8 +27,8 @@ def main() -> None:
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--evermind-home", required=True)
     parser.add_argument("--everos-root", required=True)
-    parser.add_argument("--basic-memory-root", required=True)
-    parser.add_argument("--candidate-dir", required=True)
+    parser.add_argument("--archive-root", required=True)
+    parser.add_argument("--archive-candidate-dir", required=True)
     args = parser.parse_args()
 
     path = Path(args.env_file)
@@ -36,8 +36,8 @@ def main() -> None:
     replacements = {
         "EVERMIND_HOME": args.evermind_home,
         "EVEROS_ROOT": args.everos_root,
-        "BASIC_MEMORY_ROOT": args.basic_memory_root,
-        "BASIC_MEMORY_CANDIDATE_DIR": args.candidate_dir,
+        "EVERMIND_ARCHIVE_ROOT": args.archive_root,
+        "EVERMIND_ARCHIVE_CANDIDATE_DIR": args.archive_candidate_dir,
     }
     for key, value in replacements.items():
         text = replace_line(text, key, value)
@@ -46,4 +46,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

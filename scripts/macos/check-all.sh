@@ -17,19 +17,19 @@ ENV_FILE="$PROJECT_ROOT/.env"
 ENV_TEXT=""
 [[ -f "$ENV_FILE" ]] && ENV_TEXT="$(cat "$ENV_FILE")"
 
-command -v basic-memory >/dev/null 2>&1 && pass "Basic Memory CLI available" || warn "Basic Memory CLI not found"
+command -v basic-memory >/dev/null 2>&1 && pass "EverMind Archive Engine available" || warn "EverMind Archive Engine not found"
 
 CODEBASE_PATH="$(printf '%s\n' "$ENV_TEXT" | sed -n 's/^EVERMIND_CODEBASE_MEMORY_PATH=//p' | head -n 1)"
 if [[ -n "$CODEBASE_PATH" && -x "$CODEBASE_PATH" ]]; then
-  pass "codebase-memory-mcp executable found at $CODEBASE_PATH"
+  pass "EverMind Code Graph Engine executable found at $CODEBASE_PATH"
 elif command -v codebase-memory-mcp >/dev/null 2>&1; then
-  pass "codebase-memory-mcp available on PATH"
+  pass "EverMind Code Graph Engine available on PATH"
 else
-  warn "codebase-memory-mcp not found"
+  warn "EverMind Code Graph Engine not found"
 fi
 
-CANDIDATE_DIR="$(printf '%s\n' "$ENV_TEXT" | sed -n 's/^BASIC_MEMORY_CANDIDATE_DIR=//p' | head -n 1)"
-[[ -n "$CANDIDATE_DIR" && -d "$CANDIDATE_DIR" ]] && pass "Basic Memory candidate dir exists" || warn "Basic Memory candidate dir missing"
+CANDIDATE_DIR="$(printf '%s\n' "$ENV_TEXT" | sed -n 's/^EVERMIND_ARCHIVE_CANDIDATE_DIR=//p' | head -n 1)"
+[[ -n "$CANDIDATE_DIR" && -d "$CANDIDATE_DIR" ]] && pass "EverMind Archive candidate dir exists" || warn "EverMind Archive candidate dir missing"
 
 for name in EVEROS_LLM__API_KEY EVEROS_MULTIMODAL__API_KEY EVEROS_EMBEDDING__API_KEY EVEROS_RERANK__API_KEY; do
   if grep -q "^$name=." "$ENV_FILE" 2>/dev/null; then
@@ -43,4 +43,5 @@ done
 
 [[ "$OK" -eq 1 ]] || exit 1
 pass "EverMind full stack checks passed"
+
 

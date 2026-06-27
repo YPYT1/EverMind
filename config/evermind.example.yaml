@@ -9,11 +9,11 @@ runtime:
   everos_root:
     windows: "D:\\EverMindMemory\\everos"
     macos: "$HOME/.evermind/everos"
-  basic_memory_root:
-    windows: "D:\\EverMindMemory\\basic-memory"
+  evermind_archive_root:
+    windows: "D:\\EverMindMemory\\evermind-archive"
     macos: "$HOME/BasicMemory"
-  basic_memory_candidate_dir:
-    windows: "D:\\EverMindMemory\\basic-memory\\.candidates"
+  evermind_archive_candidate_dir:
+    windows: "D:\\EverMindMemory\\evermind-archive\\.candidates"
     macos: "$HOME/BasicMemory/.candidates"
 
 everos:
@@ -26,7 +26,7 @@ mcp:
   backend: "everos"
   user_id: "mcp-user"
   default_space: "coding:<project-slug>"
-  basic_memory_write_policy: "candidate"
+  archive_write_policy: "candidate"
 
 models:
   llm:
@@ -47,14 +47,14 @@ models:
     api_key_env: "EVEROS_RERANK__API_KEY"
 
 external_components:
-  basic_memory:
+  archive_engine:
     version: "0.22.1"
     license: "AGPL-3.0"
-    install: "uv tool install basic-memory==0.22.1"
-  codebase_memory_mcp:
+    install_source: "See third_party.lock.yaml"
+  code_graph_engine:
     version: "v0.8.1"
     license: "MIT"
-    install_source: "https://github.com/DeusData/codebase-memory-mcp/releases"
+    install_source: "See third_party.lock.yaml"
 
 sync:
   memory_mode: "local"
@@ -92,28 +92,29 @@ write_policy:
 memory_router:
   project_fact:
     everos_space: "coding:<project-slug>"
-    basic_memory_target: "项目概览.md"
+    archive_target: "项目概览.md"
     write_level: "level_2_review_candidate"
   architecture_decision:
     everos_space: "coding:<project-slug>"
-    basic_memory_target: "模块实现.md"
+    archive_target: "模块实现.md"
     write_level: "level_2_review_candidate"
   known_pitfall:
     everos_space: "coding:<project-slug>"
-    basic_memory_target: "已知坑点.md"
+    archive_target: "已知坑点.md"
     write_level: "level_2_review_candidate"
   test_practice:
     everos_space: "coding:<project-slug>"
-    basic_memory_target: "测试与验证.md"
+    archive_target: "测试与验证.md"
     write_level: "level_2_review_candidate"
   user_preference:
     everos_space: "chat:preferences"
-    basic_memory_target: null
+    archive_target: null
     write_level: "level_1_realtime_memory"
   codebase_graph:
-    codebase_memory: true
+    code_graph: true
     everos_space: "coding:<project-slug>"
     write_level: "level_1_realtime_memory"
   secret_or_credential:
     write_level: "level_0_never_store"
+
 

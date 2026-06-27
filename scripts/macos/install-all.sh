@@ -4,9 +4,9 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EVERMIND_HOME="${EVERMIND_HOME:-$HOME/.evermind}"
 EVEROS_ROOT="$EVERMIND_HOME/everos"
-BASIC_MEMORY_ROOT="${BASIC_MEMORY_ROOT:-$HOME/BasicMemory}"
+EVERMIND_ARCHIVE_ROOT="${EVERMIND_ARCHIVE_ROOT:-$HOME/BasicMemory}"
 TOOLS_ROOT="$EVERMIND_HOME/tools"
-CODEBASE_ROOT="$TOOLS_ROOT/codebase-memory-mcp"
+CODEBASE_ROOT="$TOOLS_ROOT/evermind-code-graph"
 SKIP_TOOL_INSTALL="${SKIP_TOOL_INSTALL:-0}"
 
 info() { printf '[EverMind] %s\n' "$1"; }
@@ -34,13 +34,13 @@ render_file() {
   local source="$1"
   local dest="$2"
   mkdir -p "$(dirname "$dest")"
-  python3 - "$source" "$dest" "$PROJECT_ROOT" "$EVEROS_ROOT" "$BASIC_MEMORY_ROOT" <<'PY'
+  python3 - "$source" "$dest" "$PROJECT_ROOT" "$EVEROS_ROOT" "$EVERMIND_ARCHIVE_ROOT" <<'PY'
 import sys
 source, dest, evermind, everos, basic = sys.argv[1:]
 text = open(source, encoding="utf-8").read()
 text = text.replace("<EVERMIND_ROOT>", evermind)
 text = text.replace("<EVEROS_ROOT>", everos)
-text = text.replace("<BASIC_MEMORY_ROOT>", basic)
+text = text.replace("<EVERMIND_ARCHIVE_ROOT>", basic)
 open(dest, "w", encoding="utf-8").write(text)
 PY
 }
@@ -51,7 +51,7 @@ mkdir -p "$TOOLS_ROOT" "$CODEBASE_ROOT"
 if [[ "$SKIP_TOOL_INSTALL" != "1" ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv was not found. Install uv first."; exit 1; }
   BASIC_VERSION="$(lock_version basic-memory)"
-  info "Installing Basic Memory $BASIC_VERSION with uv tool."
+  info "Installing EverMind Archive $BASIC_VERSION with uv tool."
   uv tool install "basic-memory==$BASIC_VERSION"
 
   CODEBASE_VERSION="$(lock_version codebase-memory-mcp)"
@@ -63,7 +63,7 @@ if [[ "$SKIP_TOOL_INSTALL" != "1" ]]; then
   fi
   URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/$CODEBASE_VERSION/$ASSET"
   ARCHIVE="$CODEBASE_ROOT/$ASSET"
-  info "Downloading codebase-memory-mcp $CODEBASE_VERSION."
+  info "Downloading EverMind Code Graph $CODEBASE_VERSION."
   curl -L "$URL" -o "$ARCHIVE"
   tar -xzf "$ARCHIVE" -C "$CODEBASE_ROOT"
 fi
@@ -74,8 +74,8 @@ if [[ -n "$CODEBASE_BIN" ]]; then
     --env-file "$PROJECT_ROOT/.env" \
     --evermind-home "$EVERMIND_HOME" \
     --everos-root "$EVEROS_ROOT" \
-    --basic-memory-root "$BASIC_MEMORY_ROOT" \
-    --candidate-dir "$BASIC_MEMORY_ROOT/.candidates"
+    --archive-root "$EVERMIND_ARCHIVE_ROOT" \
+    --archive-candidate-dir "$EVERMIND_ARCHIVE_ROOT/.candidates"
   python3 - "$PROJECT_ROOT/.env" "$CODEBASE_BIN" <<'PY'
 import sys
 path, codebase = sys.argv[1:]
@@ -93,7 +93,7 @@ if not seen:
 open(path, "w", encoding="utf-8").write("\n".join(out) + "\n")
 PY
 else
-  warn "codebase-memory-mcp executable was not found under $CODEBASE_ROOT."
+  warn "EverMind Code Graph Engine executable was not found under $CODEBASE_ROOT."
 fi
 
 GENERATED="$PROJECT_ROOT/generated/mcp-config"
@@ -105,3 +105,4 @@ render_file "$PROJECT_ROOT/agents/devin/mcp-config.json" "$GENERATED/devin.json"
 info "Generated MCP snippets in $GENERATED"
 info "No client config files were overwritten."
 info "Next: fill model API keys in .env, then run scripts/macos/check-all.sh"
+

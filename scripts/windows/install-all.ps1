@@ -42,9 +42,9 @@ function Render-File {
 & (Join-Path $PSScriptRoot "install.ps1") -EverMindHome $EverMindHome -ProjectRoot $ProjectRoot
 
 $everosRoot = Join-Path $EverMindHome "everos"
-$basicRoot = Join-Path $EverMindHome "basic-memory"
+$basicRoot = Join-Path $EverMindHome "evermind-archive"
 $toolsRoot = Join-Path $EverMindHome "tools"
-$codebaseRoot = Join-Path $toolsRoot "codebase-memory-mcp"
+$codebaseRoot = Join-Path $toolsRoot "evermind-code-graph"
 New-Item -ItemType Directory -Force -Path $toolsRoot, $codebaseRoot | Out-Null
 
 if (-not $SkipToolInstall) {
@@ -53,14 +53,14 @@ if (-not $SkipToolInstall) {
   }
 
   $basicVersion = Get-LockVersion -Name "basic-memory"
-  Info "Installing Basic Memory $basicVersion with uv tool."
+  Info "Installing EverMind Archive $basicVersion with uv tool."
   & uv tool install "basic-memory==$basicVersion"
-  if ($LASTEXITCODE -ne 0) { throw "Basic Memory install failed." }
+  if ($LASTEXITCODE -ne 0) { throw "EverMind Archive install failed." }
 
   $codebaseVersion = Get-LockVersion -Name "codebase-memory-mcp"
   $codebaseExePath = Join-Path $codebaseRoot "codebase-memory-mcp.exe"
   $url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/$codebaseVersion/codebase-memory-mcp-windows-amd64.exe"
-  Info "Downloading codebase-memory-mcp $codebaseVersion."
+  Info "Downloading EverMind Code Graph $codebaseVersion."
   Invoke-WebRequest -Uri $url -OutFile $codebaseExePath
 }
 
@@ -71,14 +71,14 @@ if ($codebaseExe) {
   $text = $text -replace "(?m)^EVERMIND_CODEBASE_MEMORY_PATH=.*$", "EVERMIND_CODEBASE_MEMORY_PATH=$($codebaseExe.FullName)"
   Set-Content -LiteralPath $envPath -Value $text -Encoding UTF8
 } else {
-  Warn "codebase-memory-mcp executable was not found under $codebaseRoot. check-all will report this until installed."
+  Warn "EverMind Code Graph executable was not found under $codebaseRoot. check-all will report this until installed."
 }
 
 $generated = Join-Path $ProjectRoot "generated\mcp-config"
 $values = @{
-  "<EVERMIND_ROOT>" = $ProjectRoot
-  "<EVEROS_ROOT>" = $everosRoot
-  "<BASIC_MEMORY_ROOT>" = $basicRoot
+  "<EVERMIND_ROOT>" = $ProjectRoot.Replace("\", "/")
+  "<EVEROS_ROOT>" = $everosRoot.Replace("\", "/")
+  "<EVERMIND_ARCHIVE_ROOT>" = $basicRoot.Replace("\", "/")
 }
 
 Render-File -Source (Join-Path $ProjectRoot "agents\codex\config-snippet.toml") -Destination (Join-Path $generated "codex.toml") -Values $values
@@ -89,3 +89,4 @@ Render-File -Source (Join-Path $ProjectRoot "agents\devin\mcp-config.json") -Des
 Info "Generated MCP snippets in $generated"
 Info "No client config files were overwritten."
 Info "Next: fill model API keys in .env, then run scripts/windows/check-all.ps1"
+

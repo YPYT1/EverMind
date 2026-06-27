@@ -23,9 +23,9 @@ if (Test-Path -LiteralPath $envPath) {
 
 if (Get-Command basic-memory -ErrorAction SilentlyContinue) {
   $version = (& basic-memory --version 2>$null | Select-Object -First 1)
-  Pass "Basic Memory CLI available $version"
+  Pass "EverMind Archive Engine available $version"
 } else {
-  Warn "Basic Memory CLI not found; run scripts/windows/install-all.ps1"
+  Warn "EverMind Archive Engine not found; run scripts/windows/install-all.ps1"
 }
 
 $codebasePath = ""
@@ -34,18 +34,18 @@ if ($envText -match "(?m)^EVERMIND_CODEBASE_MEMORY_PATH=(.+)$") {
 }
 $codebaseCmd = Get-Command codebase-memory-mcp -ErrorAction SilentlyContinue
 if ($codebasePath -and (Test-Path -LiteralPath $codebasePath)) {
-  Pass "codebase-memory-mcp executable found at $codebasePath"
+  Pass "EverMind Code Graph Engine executable found at $codebasePath"
 } elseif ($codebaseCmd) {
-  Pass "codebase-memory-mcp available on PATH"
+  Pass "EverMind Code Graph Engine available on PATH"
 } else {
-  Warn "codebase-memory-mcp not found; run scripts/windows/install-all.ps1 or set EVERMIND_CODEBASE_MEMORY_PATH"
+  Warn "EverMind Code Graph Engine not found; run scripts/windows/install-all.ps1 or set EVERMIND_CODEBASE_MEMORY_PATH"
 }
 
-if ($envText -match "(?m)^BASIC_MEMORY_CANDIDATE_DIR=(.+)$") {
+if ($envText -match "(?m)^EVERMIND_ARCHIVE_CANDIDATE_DIR=(.+)$") {
   $candidateDir = $Matches[1].Trim()
-  if ($candidateDir -and (Test-Path -LiteralPath $candidateDir)) { Pass "Basic Memory candidate dir exists" } else { Warn "Basic Memory candidate dir missing" }
+  if ($candidateDir -and (Test-Path -LiteralPath $candidateDir)) { Pass "EverMind Archive candidate dir exists" } else { Warn "EverMind Archive candidate dir missing" }
 } else {
-  Warn "BASIC_MEMORY_CANDIDATE_DIR missing from .env"
+  Warn "EVERMIND_ARCHIVE_CANDIDATE_DIR missing from .env"
 }
 
 $modelVars = @(
@@ -66,3 +66,4 @@ if (Test-Path -LiteralPath (Join-Path $ProjectRoot "generated\mcp-config\codex.t
 
 if (-not $ok) { exit 1 }
 Pass "EverMind full stack checks passed"
+

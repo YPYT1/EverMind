@@ -193,7 +193,7 @@ wheels = [
 ]
 
 [[package]]
-name = "evermemos-mcp"
+name = "evermind-mcp"
 version = "0.5.6"
 source = { editable = "." }
 dependencies = [

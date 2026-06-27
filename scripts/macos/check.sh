@@ -11,7 +11,7 @@ warn() { printf '[WARN] %s\n' "$1"; OK=0; }
 command -v uv >/dev/null 2>&1 && pass "uv is available" || warn "uv is not available"
 [[ -f "$PROJECT_ROOT/mcp/pyproject.toml" ]] && pass "MCP bridge exists" || warn "MCP bridge missing"
 [[ -f "$PROJECT_ROOT/skills/evermind/SKILL.md" ]] && pass "umbrella skill exists" || warn "umbrella skill missing"
-[[ -f "$PROJECT_ROOT/templates/basic-memory-project/项目概览.md" ]] && pass "Basic Memory templates exist" || warn "Basic Memory templates missing"
+[[ -f "$PROJECT_ROOT/templates/evermind-archive-project/项目概览.md" ]] && pass "EverMind Archive templates exist" || warn "EverMind Archive templates missing"
 
 if curl -fsS --max-time 3 http://127.0.0.1:3378/health >/dev/null 2>&1; then
   pass "EverOS health endpoint responded"
@@ -32,4 +32,5 @@ fi
 
 [[ "$OK" -eq 1 ]] || exit 1
 pass "EverMind checks passed"
+
 

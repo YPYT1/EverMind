@@ -12,7 +12,7 @@ if (Test-Path -LiteralPath (Join-Path $ProjectRoot ".env")) { Pass ".env exists"
 if (Get-Command uv -ErrorAction SilentlyContinue) { Pass "uv is available" } else { Warn "uv is not available" }
 if (Test-Path -LiteralPath (Join-Path $ProjectRoot "mcp\pyproject.toml")) { Pass "MCP bridge exists" } else { Warn "MCP bridge missing" }
 if (Test-Path -LiteralPath (Join-Path $ProjectRoot "skills\evermind\SKILL.md")) { Pass "umbrella skill exists" } else { Warn "umbrella skill missing" }
-if (Test-Path -LiteralPath (Join-Path $ProjectRoot "templates\basic-memory-project\项目概览.md")) { Pass "Basic Memory templates exist" } else { Warn "Basic Memory templates missing" }
+if (Test-Path -LiteralPath (Join-Path $ProjectRoot "templates\evermind-archive-project\项目概览.md")) { Pass "EverMind Archive templates exist" } else { Warn "EverMind Archive templates missing" }
 
 $conn = Get-NetTCPConnection -LocalPort 3378 -State Listen -ErrorAction SilentlyContinue
 if ($conn) { Pass "port 3378 is listening" } else { Warn "port 3378 is not listening; start EverOS before MCP use" }
@@ -26,5 +26,6 @@ try {
 
 if (-not $ok) { exit 1 }
 Pass "EverMind checks passed"
+
 
 
