@@ -4,7 +4,7 @@
 
 **A local-first memory suite for AI coding agents.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![MCP](https://img.shields.io/badge/MCP-ready-6f42c1)
 ![Windows](https://img.shields.io/badge/Windows-supported-0078D4)
