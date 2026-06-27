@@ -8,27 +8,11 @@ EVERMIND_ARCHIVE_ROOT="${EVERMIND_ARCHIVE_ROOT:-$HOME/BasicMemory}"
 TOOLS_ROOT="$EVERMIND_HOME/tools"
 CODEBASE_ROOT="$TOOLS_ROOT/evermind-code-graph"
 SKIP_TOOL_INSTALL="${SKIP_TOOL_INSTALL:-0}"
+ARCHIVE_ENGINE_VERSION="0.22.1"
+CODE_GRAPH_ENGINE_VERSION="v0.8.1"
 
 info() { printf '[EverMind] %s\n' "$1"; }
 warn() { printf '[WARN] %s\n' "$1"; }
-
-lock_version() {
-  python3 - "$PROJECT_ROOT/third_party.lock.yaml" "$1" <<'PY'
-import sys
-path, name = sys.argv[1:]
-inside = False
-for raw in open(path, encoding="utf-8"):
-    line = raw.rstrip("\n")
-    if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
-        inside = line.strip()[:-1] == name
-        continue
-    if inside and line.startswith("    version:"):
-        print(line.split(":", 1)[1].strip().strip('"'))
-        break
-else:
-    raise SystemExit(f"version not found for {name}")
-PY
-}
 
 render_file() {
   local source="$1"
@@ -50,20 +34,18 @@ mkdir -p "$TOOLS_ROOT" "$CODEBASE_ROOT"
 
 if [[ "$SKIP_TOOL_INSTALL" != "1" ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv was not found. Install uv first."; exit 1; }
-  BASIC_VERSION="$(lock_version basic-memory)"
-  info "Installing EverMind Archive $BASIC_VERSION with uv tool."
-  uv tool install "basic-memory==$BASIC_VERSION"
+  info "Installing EverMind Archive $ARCHIVE_ENGINE_VERSION with uv tool."
+  uv tool install "basic-memory==$ARCHIVE_ENGINE_VERSION"
 
-  CODEBASE_VERSION="$(lock_version codebase-memory-mcp)"
   ARCH="$(uname -m)"
   if [[ "$ARCH" == "arm64" ]]; then
     ASSET="codebase-memory-mcp-darwin-arm64.tar.gz"
   else
     ASSET="codebase-memory-mcp-darwin-amd64.tar.gz"
   fi
-  URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/$CODEBASE_VERSION/$ASSET"
+  URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/$CODE_GRAPH_ENGINE_VERSION/$ASSET"
   ARCHIVE="$CODEBASE_ROOT/$ASSET"
-  info "Downloading EverMind Code Graph $CODEBASE_VERSION."
+  info "Downloading EverMind Code Graph $CODE_GRAPH_ENGINE_VERSION."
   curl -L "$URL" -o "$ARCHIVE"
   tar -xzf "$ARCHIVE" -C "$CODEBASE_ROOT"
 fi

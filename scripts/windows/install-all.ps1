@@ -9,21 +9,8 @@ $ErrorActionPreference = "Stop"
 function Info($msg) { Write-Host "[EverMind] $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 
-function Get-LockVersion {
-  param([string]$Name)
-  $lines = Get-Content -LiteralPath (Join-Path $ProjectRoot "third_party.lock.yaml")
-  $inside = $false
-  foreach ($line in $lines) {
-    if ($line -match "^\s{2}([^:\s]+):\s*$") {
-      $inside = ($Matches[1] -eq $Name)
-      continue
-    }
-    if ($inside -and $line -match '^\s{4}version:\s+"([^"]+)"') {
-      return $Matches[1]
-    }
-  }
-  throw "Version for $Name not found in third_party.lock.yaml"
-}
+$archiveEngineVersion = "0.22.1"
+$codeGraphEngineVersion = "v0.8.1"
 
 function Render-File {
   param(
@@ -52,15 +39,13 @@ if (-not $SkipToolInstall) {
     throw "uv was not found. Install uv first, then rerun install-all.ps1."
   }
 
-  $basicVersion = Get-LockVersion -Name "basic-memory"
-  Info "Installing EverMind Archive $basicVersion with uv tool."
-  & uv tool install "basic-memory==$basicVersion"
+  Info "Installing EverMind Archive $archiveEngineVersion with uv tool."
+  & uv tool install "basic-memory==$archiveEngineVersion"
   if ($LASTEXITCODE -ne 0) { throw "EverMind Archive install failed." }
 
-  $codebaseVersion = Get-LockVersion -Name "codebase-memory-mcp"
   $codebaseExePath = Join-Path $codebaseRoot "codebase-memory-mcp.exe"
-  $url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/$codebaseVersion/codebase-memory-mcp-windows-amd64.exe"
-  Info "Downloading EverMind Code Graph $codebaseVersion."
+  $url = "https://github.com/DeusData/codebase-memory-mcp/releases/download/$codeGraphEngineVersion/codebase-memory-mcp-windows-amd64.exe"
+  Info "Downloading EverMind Code Graph $codeGraphEngineVersion."
   Invoke-WebRequest -Uri $url -OutFile $codebaseExePath
 }
 

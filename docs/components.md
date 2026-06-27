@@ -63,9 +63,8 @@ Use it for:
 
 The stable conclusions from code graph analysis should be written into EverMind Archive only when they are useful for future work.
 
-## Compliance Boundary
+## Project Boundary
 
 EverMind owns orchestration, installation, configuration, health checks, skills, agent templates, and the branded user experience.
 
-Third-party source, version, and license details are centralized in `THIRD_PARTY_NOTICES.md` and `third_party.lock.yaml`. This keeps the main user path clean while preserving open-source compliance.
-
+The public user path is intentionally written as one integrated EverMind system: users install EverMind, run EverMind setup, copy EverMind MCP snippets, and ask their agent to use EverMind memory.

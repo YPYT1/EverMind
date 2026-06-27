@@ -47,5 +47,3 @@ uv run ruff check
 uv run pytest -q
 ```
 
-Third-party notices are kept in the repository root at `THIRD_PARTY_NOTICES.md`.
-

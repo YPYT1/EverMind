@@ -55,6 +55,5 @@ Before publishing a fork:
 - delete `generated/`;
 - delete caches;
 - scan for private paths and secrets;
-- keep `THIRD_PARTY_NOTICES.md`;
-- keep `third_party.lock.yaml`.
-
+- verify README links and setup commands;
+- run tests before pushing.

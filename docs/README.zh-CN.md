@@ -17,7 +17,7 @@
 | 文档 | 主题 |
 | --- | --- |
 | [架构](architecture.md) | 三层架构和记忆生命周期。 |
-| [组件说明](components.md) | Runtime、MCP、Archive、Code Graph 和合规边界。 |
+| [组件说明](components.md) | Runtime、MCP、Archive、Code Graph 和项目边界。 |
 | [MCP 工具](mcp-tools.md) | agent 能调用哪些工具，以及什么时候用。 |
 | [Skills](skills.md) | EverMind skills 如何约束 agent 的记忆行为。 |
 | [写入策略](write-policy.md) | 哪些内容自动写、哪些生成候选、哪些禁止落库。 |
@@ -37,4 +37,3 @@
 3. 把生成的 MCP snippet 复制到对应 agent。
 4. 阅读 [MCP 工具](mcp-tools.md)，了解 agent 可以调用哪些能力。
 5. 在允许写入正式长期档案前，阅读 [写入策略](write-policy.md)。
-

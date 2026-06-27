@@ -47,5 +47,3 @@ uv run ruff check
 uv run pytest -q
 ```
 
-第三方声明集中放在仓库根目录 `THIRD_PARTY_NOTICES.md`。
-

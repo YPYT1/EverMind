@@ -2,77 +2,186 @@
 
 # EverMind
 
-**Local-first AI memory system for coding agents**
+**A local-first context persistence system for AI-assisted software work.**
 
-[![EverMind](https://img.shields.io/badge/EverMind-AI%20Memory%20System-2E86AB?style=flat-square)](https://github.com/YPYT1/EverMind)
+[![EverMind](https://img.shields.io/badge/EverMind-Context%20Persistence-2E86AB?style=flat-square)](https://github.com/YPYT1/EverMind)
 [![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
 [![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](docs/quickstart-windows.md)
 [![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](docs/quickstart-macos.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange?style=flat-square)](docs/README.md)
 
-[Quick Start](#quick-start) · [How It Works](#how-it-works) · [MCP Tools](docs/mcp-tools.md) · [Integrations](docs/integrations.md) · [Docs](docs/README.md) · [中文](README.zh-CN.md)
+[Quick Start](#installation-and-usage) · [Architecture](#system-architecture) · [Concepts](#core-concepts) · [Integrations](#integration-model) · [Docs](docs/README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
 
 </div>
 
-EverMind is a complete local memory system for AI coding agents. It gives Codex, Claude Code, Cursor, Devin, and other MCP-capable tools a shared way to read project context, remember useful facts, build reviewed long-term notes, and inspect code structure.
+## Definition
 
-EverMind is not just a single memory MCP. It packages the whole workflow:
+EverMind is a local-first memory infrastructure layer for AI-assisted software engineering.
 
-- **EverMind Runtime**: local realtime memory storage and retrieval.
-- **EverMind MCP**: the bridge that exposes memory tools to agents.
-- **EverMind Skills**: repeatable agent behavior for reading, searching, and writing memory.
-- **EverMind Archive**: reviewed Markdown project knowledge for durable facts.
-- **EverMind Code Graph**: repository structure, call-path, code search, and impact analysis.
-- **EverMind Setup**: Windows/macOS scripts that install, configure, render snippets, and check the stack.
+It persists project context across sessions, separates fast working memory from reviewed long-term knowledge, and gives coding agents a stable way to recover, search, evolve, and verify project knowledge.
 
-The default mode is local-first. Cloud memory is only a future adapter path, not a requirement for v1.
+EverMind is not an agent framework, not a vector database, and not a standalone RAG application. It is the persistence layer that keeps software knowledge available to agents over time.
 
-## Quick Start
+## Problem Background
 
-### Windows
+AI coding systems usually operate with a short-lived context window. Even when they can read files and call tools, they still lose important engineering context between sessions:
+
+- why a module was designed in a specific way;
+- which command verifies a behavior;
+- where runtime data and generated artifacts live;
+- which implementation detail caused a previous failure;
+- which facts are stable enough to become project knowledge;
+- which notes are temporary and should not pollute long-term documentation.
+
+RAG and vector search help retrieve text, but they do not define a full knowledge lifecycle. Agent frameworks can orchestrate actions, but they usually do not own durable project memory. EverMind fills this gap.
+
+## Core Solution
+
+EverMind models memory as a lifecycle, not as a single storage operation.
+
+The core abstraction is:
+
+```text
+working context -> searchable memory -> reviewed knowledge -> reusable project intelligence
+```
+
+This gives AI coding systems three properties that a raw retrieval layer does not provide:
+
+- **continuity**: the next session can start from known project context;
+- **structure**: memory is routed by project, agent, archive, and code graph concerns;
+- **trust**: durable notes are reviewed before becoming official knowledge.
+
+## System Architecture
+
+EverMind is an infrastructure layer placed between AI coding agents and local memory stores.
+
+```text
+AI Coding Interfaces
+  Codex / Claude Code / Cursor / Devin
+  agent instructions and skills
+  generated MCP configuration
+
+EverMind Orchestration Layer
+  setup and health checks
+  EverMind MCP bridge
+  memory routing
+  write policy
+  archive candidate flow
+  code graph access
+
+Local Knowledge Substrate
+  realtime project memory
+  reviewed Markdown archive
+  repository graph index
+  runtime configuration and local paths
+```
+
+### Why this architecture
+
+The agent interface layer should stay replaceable. Codex, Claude Code, Cursor, and Devin have different configuration formats, but they need the same memory behavior.
+
+The orchestration layer owns policy. It decides whether a fact should be recalled, remembered, proposed as a candidate, or ignored.
+
+The local knowledge substrate owns persistence. It keeps memory, archive notes, and code graph state on the user's machine.
+
+## Core Concepts
+
+### Context Persistence
+
+Project context should survive a chat session. EverMind gives agents a repeatable way to recover previous decisions, runtime conventions, known pitfalls, and verification practices.
+
+### Memory Lifecycle
+
+EverMind does not treat all memory as equal:
+
+1. `briefing` restores project context at the beginning of work.
+2. `recall` searches relevant prior memory.
+3. `remember` stores useful working facts.
+4. `propose_basic_memory_update` creates a reviewed archive candidate.
+5. `commit_basic_memory_update` promotes a candidate only after explicit confirmation.
+
+### Reviewed Knowledge
+
+Long-term project knowledge should be stable, evidence-backed, and readable. EverMind Archive stores official knowledge as Markdown after review.
+
+### Codebase Context
+
+Software memory is not only prose. Agents also need architecture, call paths, snippets, and impact analysis. EverMind includes code graph access so memory can be grounded in repository structure.
+
+### Local-First Operation
+
+The default deployment keeps memory and project knowledge local. Future cloud modes are treated as optional synchronization strategies, not as a requirement.
+
+## Core Capabilities
+
+| Capability | What it provides |
+| --- | --- |
+| Session recovery | Start work with project briefing instead of cold reading. |
+| Semantic recall | Search project facts, decisions, pitfalls, and preferences. |
+| Working memory | Persist useful context during active development. |
+| Reviewed archive | Convert stable facts into official Markdown knowledge only after confirmation. |
+| Code graph understanding | Inspect architecture, code search, call paths, snippets, and impact. |
+| Agent portability | Use the same memory system from Codex, Claude Code, Cursor, and Devin. |
+| Local setup automation | Generate `.env`, MCP snippets, skill links, and health checks for Windows/macOS. |
+
+## Use Cases
+
+- Continue a feature after days or weeks without re-reading the entire repository.
+- Ask an agent to recall previous architecture decisions before editing a module.
+- Preserve test commands, runtime paths, and known pitfalls as project knowledge.
+- Generate reviewed change notes after a coding task.
+- Analyze code impact before modifying a shared function.
+- Maintain a local knowledge base for multiple AI coding tools.
+
+## Installation And Usage
+
+<details>
+<summary><strong>Windows: guided setup</strong></summary>
 
 ```powershell
 git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
-
-# Guided setup. It creates .env, renders MCP snippets, and installs user skills.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\configure.ps1
+```
 
-# Or run the full bootstrap flow.
+</details>
+
+<details>
+<summary><strong>Windows: full bootstrap and check</strong></summary>
+
+```powershell
+git clone https://github.com/YPYT1/EverMind.git
+cd EverMind
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\bootstrap.ps1
 ```
 
-If you already installed the external engines and only want EverMind config:
+</details>
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\install-all.ps1 -SkipToolInstall
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\check-all.ps1
-```
-
-### macOS
+<details>
+<summary><strong>macOS: guided setup</strong></summary>
 
 ```bash
 git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
-
-# Guided setup.
 bash scripts/macos/configure.sh
+```
 
-# Or run the full bootstrap flow.
+</details>
+
+<details>
+<summary><strong>macOS: full bootstrap and check</strong></summary>
+
+```bash
+git clone https://github.com/YPYT1/EverMind.git
+cd EverMind
 bash scripts/macos/bootstrap.sh
 ```
 
-If you already installed the external engines and only want EverMind config:
+</details>
 
-```bash
-bash scripts/macos/install-all.sh --skip-tool-install
-bash scripts/macos/check-all.sh
-```
-
-After setup, copy the generated snippet for your tool:
+After setup, copy the generated MCP snippet for your tool:
 
 ```text
 generated/mcp-config/codex.toml
@@ -81,103 +190,55 @@ generated/mcp-config/cursor.json
 generated/mcp-config/devin.json
 ```
 
-Normal MCP start command:
-
-```text
-uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-```
-
 Then ask your agent:
 
 ```text
 Use EverMind. Start with briefing for this project, then recall known pitfalls.
 ```
 
-## How It Works
+## Integration Model
 
-EverMind uses a three-layer architecture:
-
-```text
-Agent Layer
-  Codex / Claude Code / Cursor / Devin
-  skills + agent instructions + generated MCP config
-
-Memory Orchestration Layer
-  installer/checker
-  EverMind MCP
-  memory router
-  write policy
-  future cloud sync adapter
-
-Storage Layer
-  local realtime memory
-  reviewed Markdown archive
-  local code graph index
-  optional future cloud memory
-```
-
-The important design choice is separation of memory speed and memory trust:
-
-- `remember` writes useful realtime context for later recall.
-- `briefing` restores structured context at the beginning of a task.
-- `recall` searches memories by query and space.
-- `propose_basic_memory_update` creates a reviewed archive candidate.
-- `commit_basic_memory_update` writes official archive notes only after explicit confirmation.
-
-This keeps agents helpful without letting them silently pollute long-term project documentation.
-
-## Repository Layout
+EverMind integrates through MCP and agent-side instruction files.
 
 ```text
-mcp/          EverMind MCP bridge and tests.
-skills/       Agent skills for memory-first workflows.
-agents/       Codex, Claude Code, Cursor, and Devin templates.
-templates/    Archive templates and MCP config templates.
-scripts/      Windows/macOS setup, startup, and check helpers.
-config/       One human-readable unified config example.
-docs/         Architecture, usage, integration, security, and troubleshooting docs.
-tests/        Top-level integration and release-readiness checks.
+Agent client
+  -> generated MCP snippet
+  -> uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
+  -> EverMind MCP tools
+  -> local memory, archive, and code graph layers
 ```
+
+Supported templates:
+
+- Codex: `agents/codex/AGENTS.md`
+- Claude Code: `agents/claude-code/CLAUDE.md`
+- Cursor: `agents/cursor/rules.md`
+- Devin: `agents/devin/instructions.md`
 
 ## Configuration
 
-EverMind intentionally has two configuration surfaces:
+EverMind uses two configuration surfaces:
 
-- `config/evermind.example.yaml`: readable full-system reference for humans.
-- `.env.example`: runtime environment template copied to `.env` for local paths and API keys.
-
-Do not commit `.env`. Keep API keys in `.env` or your shell environment.
+- `config/evermind.example.yaml`: human-readable system reference.
+- `.env.example`: runtime environment template copied to `.env`.
 
 Common placeholders:
 
 | Placeholder | Meaning |
 | --- | --- |
 | `<EVERMIND_ROOT>` | Path to this cloned repository. |
-| `<EVEROS_ROOT>` | Local runtime data root for memory files, indexes, logs, and runtime config. |
+| `<EVEROS_ROOT>` | Local runtime data root. |
 | `<EVERMIND_ARCHIVE_ROOT>` | Reviewed Markdown archive root. |
 
-More detail: [Configuration](docs/configuration.md).
+## Roadmap
 
-## Documentation
+- Improve non-interactive setup for managed machines.
+- Expand archive templates for larger repositories.
+- Add stronger diagnostics for MCP startup failures.
+- Keep local-first as the default operating model.
+- Reserve optional local-to-cloud synchronization modes without making cloud memory mandatory.
 
-- [Documentation Index](docs/README.md)
-- [Windows Quickstart](docs/quickstart-windows.md)
-- [macOS Quickstart](docs/quickstart-macos.md)
-- [Architecture](docs/architecture.md)
-- [Components](docs/components.md)
-- [MCP Tools](docs/mcp-tools.md)
-- [Integrations](docs/integrations.md)
-- [Skills](docs/skills.md)
-- [Write Policy](docs/write-policy.md)
-- [Security](docs/security.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Local to Cloud Roadmap](docs/local-to-cloud-roadmap.md)
-
-## Compliance
-
-EverMind presents one product experience, while third-party source, license, and version information is kept transparent in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [third_party.lock.yaml](third_party.lock.yaml).
-
-## Community
+## Community and Support
 
 Issues and pull requests are welcome. If EverMind helps your local AI memory workflow, a star or small contribution helps the project move forward.
 
