@@ -1,0 +1,14 @@
+[mcp_servers.evermemos]
+type = "stdio"
+command = "uv"
+args = ["run", "--directory", "D:\\Project\\EverMind\\mcp", "evermemos-mcp"]
+
+[mcp_servers.evermemos.env]
+EVERMEMOS_BACKEND = "everos"
+EVEROS_BASE_URL = "http://127.0.0.1:3378"
+EVEROS_ROOT = "D:\\EverMindMemory\\everos"
+EVEROS_TIMEOUT_SECONDS = "180"
+BASIC_MEMORY_ROOT = "D:\\EverMindMemory\\basic-memory"
+BASIC_MEMORY_WRITE_POLICY = "candidate"
+
+

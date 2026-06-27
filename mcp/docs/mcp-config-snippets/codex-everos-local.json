@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "evermemos": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "D:\\Project\\evermemos-mcp",
+        "evermemos-mcp"
+      ],
+      "env": {
+        "EVERMEMOS_BACKEND": "everos",
+        "EVEROS_BASE_URL": "http://127.0.0.1:3378",
+        "EVEROS_ROOT": "D:\\EverOSMemory",
+        "EVEROS_TIMEOUT_SECONDS": "180",
+        "BASIC_MEMORY_ROOT": "D:\\BasicMemory",
+        "BASIC_MEMORY_WRITE_POLICY": "candidate"
+      }
+    }
+  }
+}
+
+

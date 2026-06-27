@@ -1,0 +1,119 @@
+# EverMind unified configuration example.
+# Copy this file when you want one readable config that explains the whole stack.
+# Runtime secrets should still live in .env or your shell environment.
+
+runtime:
+  evermind_home:
+    windows: "D:\\EverMindMemory"
+    macos: "$HOME/.evermind"
+  everos_root:
+    windows: "D:\\EverMindMemory\\everos"
+    macos: "$HOME/.evermind/everos"
+  basic_memory_root:
+    windows: "D:\\EverMindMemory\\basic-memory"
+    macos: "$HOME/BasicMemory"
+  basic_memory_candidate_dir:
+    windows: "D:\\EverMindMemory\\basic-memory\\.candidates"
+    macos: "$HOME/BasicMemory/.candidates"
+
+everos:
+  host: "127.0.0.1"
+  port: 3378
+  base_url: "http://127.0.0.1:3378"
+  timeout_seconds: 180
+
+mcp:
+  backend: "everos"
+  user_id: "mcp-user"
+  default_space: "coding:<project-slug>"
+  basic_memory_write_policy: "candidate"
+
+models:
+  llm:
+    model: "openai/gpt-4.1-mini"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "EVEROS_LLM__API_KEY"
+  multimodal:
+    model: "google/gemini-3-flash-preview"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "EVEROS_MULTIMODAL__API_KEY"
+  embedding:
+    model: "Qwen/Qwen3-Embedding-4B"
+    base_url: "https://api.deepinfra.com/v1/openai"
+    api_key_env: "EVEROS_EMBEDDING__API_KEY"
+  rerank:
+    model: "Qwen/Qwen3-Reranker-4B"
+    base_url: "https://api.deepinfra.com/v1/inference"
+    api_key_env: "EVEROS_RERANK__API_KEY"
+
+external_components:
+  basic_memory:
+    version: "0.22.1"
+    license: "AGPL-3.0"
+    install: "uv tool install basic-memory==0.22.1"
+  codebase_memory_mcp:
+    version: "v0.8.1"
+    license: "MIT"
+    install_source: "https://github.com/DeusData/codebase-memory-mcp/releases"
+
+sync:
+  memory_mode: "local"
+  sync_mode: "off"
+  cloud_base_url: ""
+  cloud_api_key_env: "EVERMIND_CLOUD_API_KEY"
+
+write_policy:
+  official_notes_require_confirmation: true
+  secrets_are_never_stored: true
+  evidence_required_for_code_facts: true
+  levels:
+    level_0_never_store:
+      action: "drop"
+      examples:
+        - "API keys, tokens, passwords, cookies, private keys, session credentials"
+        - "Low-value temporary logs"
+    level_1_realtime_memory:
+      action: "everos_remember"
+      examples:
+        - "Session context"
+        - "Short-lived project facts"
+        - "User preferences useful across sessions"
+    level_2_review_candidate:
+      action: "propose_basic_memory_update"
+      examples:
+        - "Architecture decisions"
+        - "Runtime configuration"
+        - "Known pitfalls"
+        - "Test strategy"
+    level_3_official_archive:
+      action: "commit_basic_memory_update"
+      requires_explicit_confirmation: true
+
+memory_router:
+  project_fact:
+    everos_space: "coding:<project-slug>"
+    basic_memory_target: "项目概览.md"
+    write_level: "level_2_review_candidate"
+  architecture_decision:
+    everos_space: "coding:<project-slug>"
+    basic_memory_target: "模块实现.md"
+    write_level: "level_2_review_candidate"
+  known_pitfall:
+    everos_space: "coding:<project-slug>"
+    basic_memory_target: "已知坑点.md"
+    write_level: "level_2_review_candidate"
+  test_practice:
+    everos_space: "coding:<project-slug>"
+    basic_memory_target: "测试与验证.md"
+    write_level: "level_2_review_candidate"
+  user_preference:
+    everos_space: "chat:preferences"
+    basic_memory_target: null
+    write_level: "level_1_realtime_memory"
+  codebase_graph:
+    codebase_memory: true
+    everos_space: "coding:<project-slug>"
+    write_level: "level_1_realtime_memory"
+  secret_or_credential:
+    write_level: "level_0_never_store"
+

@@ -1,0 +1,26 @@
+# EverMind external component lock file.
+# EverMind installs and configures these tools, but does not vendor their source.
+
+components:
+  basic-memory:
+    version: "0.22.1"
+    license: "AGPL-3.0"
+    source: "https://github.com/basicmachines-co/basic-memory"
+    package: "https://pypi.org/project/basic-memory/"
+    install:
+      windows: "uv tool install basic-memory==0.22.1"
+      macos: "uv tool install basic-memory==0.22.1"
+    role: "Reviewed Markdown knowledge archive and Basic Memory MCP/CLI."
+
+  codebase-memory-mcp:
+    version: "v0.8.1"
+    license: "MIT"
+    source: "https://github.com/DeusData/codebase-memory-mcp"
+    releases: "https://github.com/DeusData/codebase-memory-mcp/releases"
+    install:
+      windows_asset: "codebase-memory-mcp-windows-amd64.exe"
+      macos_asset_apple_silicon: "codebase-memory-mcp-darwin-arm64.tar.gz"
+      macos_asset_intel: "codebase-memory-mcp-darwin-amd64.tar.gz"
+      linux_asset: "codebase-memory-mcp-linux-amd64.tar.gz"
+    checksum_policy: "TODO before public release: add SHA256 for each release asset."
+    role: "Code graph indexing, architecture search, call-path tracing, and change-impact analysis."

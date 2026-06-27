@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "evermemos": {
+      "command": "uvx",
+      "args": ["evermemos-mcp@latest"],
+      "env": {
+        "EVERMEMOS_API_KEY": "YOUR_KEY"
+      }
+    }
+  }
+}
