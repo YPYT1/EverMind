@@ -2,15 +2,19 @@
 
 # EverMind
 
-**A local-first memory suite for AI coding agents.**
+**A local-first AI memory system for coding agents.**
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![MCP](https://img.shields.io/badge/MCP-ready-6f42c1)
-![Windows](https://img.shields.io/badge/Windows-supported-0078D4)
-![macOS](https://img.shields.io/badge/macOS-supported-000000)
-![Local First](https://img.shields.io/badge/local--first-yes-brightgreen)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-ready-6f42c1.svg)](https://modelcontextprotocol.io/)
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D4.svg)](docs/quickstart-windows.md)
+[![macOS](https://img.shields.io/badge/macOS-supported-000000.svg)](docs/quickstart-macos.md)
+[![Local First](https://img.shields.io/badge/local--first-yes-brightgreen.svg)](docs/architecture.md)
+[![GitHub stars](https://img.shields.io/github/stars/YPYT1/EverMind?style=social)](https://github.com/YPYT1/EverMind/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/YPYT1/EverMind?style=social)](https://github.com/YPYT1/EverMind/forks)
+[![Issues](https://img.shields.io/github/issues/YPYT1/EverMind.svg)](https://github.com/YPYT1/EverMind/issues)
+[![Last commit](https://img.shields.io/github/last-commit/YPYT1/EverMind.svg)](https://github.com/YPYT1/EverMind/commits/main)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-orange.svg)](https://github.com/YPYT1/EverMind/pulls)
 
 [Quick Start](#quick-start) · [User Journey](docs/user-journey.md) · [MCP Tools](docs/mcp-tools.md) · [Configuration](docs/configuration.md) · [Architecture](docs/architecture.md) · [中文](README.zh-CN.md)
 
