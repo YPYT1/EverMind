@@ -1,4 +1,5 @@
 """Tests for cloud_client: error wrapping, auth gating."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+
+pytest.skip("Legacy EverMind Cloud client tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp.cloud_client import EverMindCloudClient, EverMindMCPError
 from evermind_mcp import config

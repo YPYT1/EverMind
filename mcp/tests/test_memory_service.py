@@ -1,4 +1,5 @@
 """Tests for memory_service: tool logic with mocked Cloud API."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+
+pytest.skip("Legacy cloud memory service tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp.cloud_client import EverMindCloudClient, EverMindMCPError
 from evermind_mcp import config

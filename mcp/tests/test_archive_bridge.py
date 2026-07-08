@@ -1,10 +1,13 @@
 """Tests for the EverMind Archive candidate bridge."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import json
 
 import pytest
+
+pytest.skip("Legacy EverOS/cloud bridge tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp.archive_bridge import ArchiveBridge
 from evermind_mcp.cloud_client import EverMindMCPError

@@ -1,4 +1,5 @@
 """Tests for space_catalog_service: recovery, parsing, helpers."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -7,6 +8,8 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+
+pytest.skip("Legacy cloud space catalog tests are not part of MCP v2.", allow_module_level=True)
 
 import evermind_mcp.space_catalog_service as catalog_module
 from evermind_mcp.cloud_client import EverMindCloudClient, EverMindMCPError

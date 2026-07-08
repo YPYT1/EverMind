@@ -3,6 +3,7 @@
 Run with:
   EVERMIND_MCP_RUN_INTEGRATION_TESTS=true uv run pytest -m integration
 """
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -10,6 +11,8 @@ import os
 from uuid import uuid4
 
 import pytest
+
+pytest.skip("Legacy EverMind Cloud integration tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp.cloud_client import EverMindCloudClient
 from evermind_mcp.space_catalog_service import to_group_id

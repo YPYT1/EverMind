@@ -1,10 +1,13 @@
 """Tests for the local EverOS adapter."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
 import pytest
+
+pytest.skip("Legacy EverOS client tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp.everos_client import EverOSClient
 

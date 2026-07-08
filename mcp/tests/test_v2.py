@@ -18,7 +18,6 @@ expecting a TypeError rather than silently passing.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -30,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from evermind_mcp.storage import EmbeddedStorage
 from evermind_mcp.config_v2 import EverMindConfig
-from evermind_mcp.types_v2 import MemoryRow, BriefingData
+from evermind_mcp.types_v2 import BriefingData
 from evermind_mcp.memory_service_v2 import MemoryService
 from evermind_mcp.project_detector import detect_project_space
 

@@ -1,9 +1,14 @@
 """Tests for config env parsing."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
 import importlib
 from unittest.mock import patch
+
+import pytest
+
+pytest.skip("Legacy EverOS/cloud config tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp import config as config_module
 

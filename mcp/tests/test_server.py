@@ -1,4 +1,5 @@
 """Tests for server.py: tool dispatch and error mapping."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytest.skip("Legacy server.py cloud-dispatch tests are not part of MCP v2.", allow_module_level=True)
 
 from evermind_mcp import config, server as server_mod
 from evermind_mcp.cloud_client import EverMindCloudClient, EverMindMCPError
