@@ -247,23 +247,28 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 <div align="center">
 
 <img src="./png/EverMind3群.png" width="200" /><br/>
-<sub>EverMind Community Group</sub>
+<sub>Join the EverMind community</sub>
 
 </div>
 
+<br/>
+
 <div align="center">
+
 <table>
 <tr>
 <td align="center">
 <img src="./png/wecha.png" width="200"/><br/>
-<sub>WeChat</sub>
+<sub>Community</sub>
 </td>
+
 <td align="center">
 <img src="./png/Alipay.jpg" width="200"/><br/>
-<sub>Buy me a coffee ☕</sub>
+<sub>Support EverMind development</sub>
 </td>
 </tr>
 </table>
+
 </div>
 
 <div align="center">
