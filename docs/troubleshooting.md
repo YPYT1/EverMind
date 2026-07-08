@@ -1,109 +1,97 @@
 # Troubleshooting
 
-This guide lists common setup and runtime problems.
+## MCP Connection Issues
 
-## Port 3378 Is Not Listening
+### "evermind" not showing in Claude Desktop / Cursor
 
-Symptoms:
+1. Check the MCP config path is correct:
+   ```json
+   "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+   ```
+   Replace `/path/to/EverMind` with the absolute path to your EverMind clone.
 
-- health check fails;
-- `check-all` warns that the runtime endpoint did not respond;
-- `briefing` or `recall` cannot reach the backend.
+2. Run the smoke test to verify the install:
+   ```bash
+   cd /path/to/EverMind
+   uv run --directory mcp python -c "from evermind_mcp.storage import EmbeddedStorage; print('OK')"
+   ```
 
-Try:
+3. If uv is not found: install it from https://github.com/astral-sh/uv
+   ```bash
+   # macOS/Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   # Windows (PowerShell)
+   irm https://astral.sh/uv/install.ps1 | iex
+   ```
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\start-everos.ps1
-```
+4. If dependencies are missing:
+   ```bash
+   uv sync --directory /path/to/EverMind/mcp --extra full
+   ```
 
+5. Restart Claude Desktop or Cursor after changing the config.
+
+### Tools return errors on first use
+
+`briefing()` returning `memory_count: 0` is **normal** on first use — it means no memories exist yet. The database file is created automatically on first `remember()` or `recall()` call.
+
+The database lives at `~/.evermind/<project-slug>.db`. The project slug is auto-detected from your git remote URL.
+
+---
+
+## Vector Search Not Working
+
+If `recall()` only uses keyword search (mode: "fts" instead of "hybrid"), vector search is not installed.
+
+Install it:
 ```bash
-bash scripts/macos/start-everos.sh
+cd /path/to/EverMind/mcp
+uv pip install sqlite-vec sentence-transformers
 ```
 
-Then check:
+The first time you call `remember()` or `recall()` after installing, EverMind will download the embedding model (~22MB for BAAI/bge-small-zh-v1.5). Subsequent calls use the cached model.
 
-```text
-http://127.0.0.1:3378/health
+To use a different embedding model:
+```bash
+# Set in your shell or MCP server env:
+EVERMIND_EMBED_MODEL=all-MiniLM-L6-v2
 ```
 
-## MCP Tool Times Out
+---
 
-Check:
+## Project Space Not Detected
 
-- `uv` is installed and on PATH;
-- the MCP command points to `<EVERMIND_ROOT>/mcp`;
-- the command is `evermind-mcp`;
-- `.env` exists;
-- runtime base URL is correct.
+EverMind auto-detects your project name from `git remote get-url origin`. If you see unexpected space names or `coding:default`:
 
-Manual test:
+- Make sure you're running Claude Code / Cursor inside a git repository
+- Make sure the repo has a remote: `git remote -v`
+- Override manually: set `EVERMIND_DEFAULT_SPACE=coding:my-project` in the MCP server env block
 
-```text
-uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-```
+---
 
-## Agent Does Not See EverMind Tools
+## Memory Not Persisting Across Sessions
 
-Try:
+Memories are stored in `~/.evermind/<slug>.db`. If they're not persisting:
 
-1. restart the agent client;
-2. open a new session;
-3. verify the MCP snippet was pasted in the right config file;
-4. check whether the client requires JSON or TOML;
-5. run the platform `check-all` script.
+1. Confirm the database exists: `ls ~/.evermind/`
+2. Confirm the project slug is the same across sessions (it comes from git remote)
+3. Check for errors in Claude Desktop's MCP logs
 
-## Archive Notes Are Not Written
+---
 
-This is often expected. EverMind uses candidate-first writes.
+## Performance
 
-Check:
+| Operation | Expected | If slower |
+|-----------|----------|-----------|
+| `briefing()` | < 5ms | Database may be very large — use `forget()` to prune |
+| `recall()` FTS | < 30ms | Normal |
+| `recall()` hybrid | < 100ms | First call loads embedding model (~2s), subsequent calls fast |
+| `remember()` | < 20ms | Background embedding queue may be long |
 
-- `EVERMIND_ARCHIVE_WRITE_POLICY=candidate`;
-- candidate directory exists;
-- the agent called `propose_basic_memory_update`;
-- official commit was explicitly confirmed.
+---
 
-Official notes should not be written silently.
+## Common Mistakes
 
-## Skills Are Not Loaded
+**Do not** add EverOS env vars (`EVERMIND_MCP_BACKEND`, `EVEROS_BASE_URL`, etc.) to your MCP config. These are v1 variables and have no effect in v2. The only configuration needed is the path to the EverMind `mcp/` directory.
 
-Some clients cache skill metadata.
-
-Try:
-
-- restart the client;
-- check `~/.agents/skills`;
-- check `~/.codex/skills` if using Codex;
-- check `~/.claude/skills` if using Claude;
-- rerun setup with copy mode if symlinks are unavailable.
-
-Windows:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\setup-user.ps1 -CopyInsteadOfSymlink
-```
-
-## Windows TOML Path Problems
-
-If Codex rejects a TOML snippet, check for unescaped backslashes.
-
-Use generated snippets from:
-
-```text
-generated/mcp-config/codex.toml
-```
-
-Generated Windows TOML uses `/` path separators to avoid invalid escapes.
-
-## Model Key Checks Fail
-
-Open `.env` and fill the required keys:
-
-```text
-EVEROS_LLM__API_KEY=
-EVEROS_EMBEDDING__API_KEY=
-EVEROS_RERANK__API_KEY=
-```
-
-Only fill keys for providers you actually use. Never paste keys into README, docs, or agent instructions.
-
+**Do not** run a separate EverOS service. EverMind v2 is fully embedded — there is no HTTP service to start.

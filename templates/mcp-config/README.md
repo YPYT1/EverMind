@@ -1,33 +1,31 @@
 # MCP Config Templates
 
-These files are copy/paste templates for MCP clients.
+Copy the template for your platform and client. Replace `<EVERMIND_ROOT>` with the
+absolute path to your EverMind clone (the only placeholder).
 
-Before using any template, replace the placeholders documented in [Configuration](../../docs/configuration.md):
+| File | Client | Platform |
+|------|--------|---------|
+| `claude-code.windows.json` | Claude Desktop | Windows |
+| `claude-code.macos.json` | Claude Desktop | macOS |
+| `cursor.windows.json` | Cursor | Windows |
+| `cursor.macos.json` | Cursor | macOS |
+| `codex.windows.toml` | Codex | Windows |
+| `codex.macos.toml` | Codex | macOS |
+| `devin.example.json` | Devin | Any |
 
-- `<EVERMIND_ROOT>`
-- `<EVEROS_ROOT>`
-- `<EVERMIND_ARCHIVE_ROOT>`
-- `<EVEROS_REPO>`
-- `<CODEX_CONFIG_TOML>`
+Example (Windows, Claude Desktop):
 
-## What `EVEROS_ROOT` Means
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "C:\\Users\\you\\EverMind\\mcp", "evermind-mcp"]
+    }
+  }
+}
+```
 
-`EVEROS_ROOT` is the EverOS runtime data directory. It stores local memory files, indexes, logs, and runtime config.
-
-It is not the EverMind repository path and not the EverOS source-code path.
-
-Examples:
-
-- Windows: `D:\EverMindMemory\everos`
-- macOS: `$HOME/.evermind/everos`
-
-## What `EVERMIND_ARCHIVE_ROOT` Means
-
-`EVERMIND_ARCHIVE_ROOT` is the reviewed Markdown project archive.
-
-Examples:
-
-- Windows: `D:\EverMindMemory\evermind-archive`
-- macOS: `$HOME/BasicMemory`
-
-
+No API keys required. No extra environment variables needed.
+The setup scripts (`scripts/setup-windows.ps1` and `scripts/setup-macos.sh`)
+can auto-generate and install these configs for you.

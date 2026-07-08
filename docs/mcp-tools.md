@@ -1,80 +1,108 @@
-# MCP Tools
+# MCP Tools Reference
 
-EverMind ships EverMind MCP directly under `mcp/`.
+EverMind v2 provides 4 MCP tools. These are called by the AI agent automatically according to the session start protocol in the agent instruction files.
 
-Start command:
+## briefing
 
-```text
-uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
+**When to call**: At the start of every session, before any work.
+
+**Returns**: Project context including recent memories, important memories, and total memory count.
+
+```json
+{
+  "space": "coding:my-project",
+  "memory_count": 12,
+  "recent": [
+    {"id": "...", "content": "...", "layer": "episodic", "importance": 1}
+  ],
+  "important": [
+    {"id": "...", "content": "...", "layer": "archive", "importance": 2}
+  ],
+  "updated_at": 1720000000000
+}
 ```
 
-Most users do not run this manually. Codex, Claude Code, Cursor, or Devin starts it from the MCP config.
+If `memory_count` is 0, this is a new project. The agent should explore the codebase using `evermind-code-graph` and seed initial memories.
 
-## Tool List
+**Parameters**: none
 
-EverMind MCP exposes 9 tools.
+---
 
-| Tool | Purpose | Typical timing |
-| --- | --- | --- |
-| `list_spaces` | List memory spaces visible to the MCP server. | Setup, debugging, advanced routing. |
-| `remember` | Store useful information into realtime memory. Sensitive content is blocked by default. | During work. |
-| `request_status` | Check whether a prior write has completed extraction or indexing. | After writes. |
-| `recall` | Search relevant memories by query across one or more spaces. | Before and during work. |
-| `briefing` | Restore structured project or session context at the start of work. | Task start. |
-| `fetch_history` | Page through historical memory items chronologically. | Auditing or timeline review. |
-| `forget` | Request deletion of memories when supported by the backend. | Cleanup or correction. |
-| `propose_basic_memory_update` | Create a reviewed EverMind Archive candidate for durable project notes. | Task end. |
-| `commit_basic_memory_update` | Commit a candidate into official archive notes; requires `confirmed=true`. | After explicit confirmation. |
+## remember
 
-## Recommended Agent Pattern
+**When to call**: After discovering useful project facts, decisions, bugs, or workflows.
 
-At task start:
+**Parameters**:
+- `content` (string, required) — what to remember
+- `importance` (0/1/2, default 0) — 0=working/24h, 1=long-term, 2=permanent archive
+- `tags` (array of strings, optional) — for categorization
+- `memory_type` (string, optional) — usually omitted; auto-detected from content
 
-```text
-briefing(project=<current project>)
-recall(query=<task keywords>)
+**Memory type auto-detection** (no need to set manually):
+- content contains "bug", "error", "fix" → type: bug, layer: episodic
+- content contains "decided", "decision" → type: decision, layer: semantic
+- content contains "how to", "deploy", "steps" → type: procedural, layer: procedural
+- content contains "prefer", "always", "never" → type: preference, layer: semantic
+- default with importance ≥ 1 → type: semantic
+
+**Returns**:
+```json
+{"id": "uuid", "action": "stored", "layer": "episodic", "type": "bug", "similar_merged": false}
 ```
 
-During work:
+If identical content was already stored, returns `"action": "merged"` and does not create a duplicate.
 
-```text
-remember(content=<stable useful fact>)
-recall(query=<unclear historical decision>)
+---
+
+## recall
+
+**When to call**: Before starting work on a feature or bug; when uncertain about a prior decision.
+
+**Parameters**:
+- `query` (string, required) — what to search for
+- `limit` (integer, default 10) — max results
+- `mode` ("hybrid"/"fts"/"semantic", default "hybrid") — search strategy
+
+**Search modes**:
+- `hybrid` — BM25 keyword + vector KNN fused with RRF (best results, requires sqlite-vec)
+- `fts` — keyword-only BM25 (works without optional deps)
+- `semantic` — vector-only (requires sqlite-vec)
+
+**Returns**:
+```json
+{
+  "results": [
+    {"id": "...", "content": "...", "layer": "semantic", "score": 0.84}
+  ],
+  "mode": "hybrid",
+  "count": 3,
+  "query": "authentication"
+}
 ```
 
-At task end:
+---
 
-```text
-propose_basic_memory_update(...)
+## forget
+
+**When to call**: When a memory is outdated or incorrect and should not appear in future recalls.
+
+**Parameters**:
+- `id` (string, required) — the memory ID from a previous `recall()` result
+
+**Returns**:
+```json
+{"deleted": true, "id": "uuid"}
 ```
 
-After user confirmation:
+---
 
-```text
-commit_basic_memory_update(confirmed=true, ...)
-```
+## Memory Layers
 
-## Memory Spaces
-
-EverMind works best when memory is scoped. Recommended conventions:
-
-- `coding:<project-slug>` for project memory;
-- `agent:codex` or similar for agent behavior notes;
-- `chat:preferences` for cross-project user preferences.
-
-The project slug is usually the repository folder name normalized to lowercase.
-
-## Safety
-
-Do not use memory tools to store:
-
-- API keys;
-- tokens;
-- passwords;
-- cookies;
-- private keys;
-- session credentials;
-- unrelated personal data.
-
-Archive writes should include evidence such as file paths, commands, test results, or service status.
-
+| Layer | Importance | Retention | Typical content |
+|-------|-----------|-----------|-----------------|
+| working | 0 | 24h auto-expire | Temporary notes |
+| episodic | 1 | Long-term | Bug fixes, events |
+| semantic | 1 | Long-term | Project facts, decisions |
+| procedural | 1 | Long-term | Workflows, commands |
+| archive | 2 | Permanent | Architecture decisions |
+| graph | — | Permanent | Entity relationships (Phase 3) |

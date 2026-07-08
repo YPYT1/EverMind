@@ -1,51 +1,98 @@
 ---
 name: evermind
-description: Umbrella skill for the EverMind local memory suite. Use when a task should read local memory first, search codebase context, and produce reviewed EverMind Archive candidates after meaningful project changes.
+description: Core EverMind memory skill. Use at the start of every session and after meaningful work. Provides briefing, recall, remember, and forget operations via embedded SQLite. No external service required.
 ---
 
 # EverMind Skill
 
-EverMind connects four layers:
+EverMind gives AI coding agents persistent local memory across sessions.
+It uses 4 MCP tools backed by an embedded SQLite database — no EverOS, no cloud, no API keys needed.
 
-1. EverOS for fast local semantic memory.
-2. EverMind MCP for agent tool access.
-3. EverMind Archive for reviewed long-term project notes.
-4. evermind-code-graph for code structure and impact analysis.
+## Two-Component Architecture
 
-## Default Workflow
+EverMind has two parts that work together:
 
-### Before work
+1. **MCP Server** — provides the 4 tools (remember / recall / forget / briefing)
+2. **Skills** — shape agent behavior so the tools are used at the right time
 
-1. Determine the project slug from the repository folder name.
-2. Use `space_id = coding:<project-slug>`.
-3. Call `briefing` for high-value context.
-4. Use `recall` for decisions, pitfalls, configuration, interfaces, and test habits.
-5. Read existing EverMind Archive project notes when available.
-6. Verify memory against real files before making claims or edits.
+Both must be set up for EverMind to work as intended.
 
-### During work
+## Session Start Protocol
 
-- Search memory when a decision, module boundary, or old pitfall is uncertain.
-- Use evermind-code-graph for architecture, call paths, and change impact.
-- Do not save secrets, API keys, tokens, cookies, private keys, or session credentials.
+**At the beginning of every conversation, before any other work:**
 
-### After work
+### Step 1 — Load project context
 
-When code, configuration, interfaces, test strategy, deployment, or architecture changed:
+Call `briefing()`.
 
-1. Summarize stable facts.
-2. Include evidence: files, commands, test results, or service status.
-3. Generate a EverMind Archive candidate.
-4. Commit official notes only after explicit user confirmation.
+- Returns memories (`memory_count > 0`) → read them, use as project context, proceed.
+- Returns empty (`memory_count = 0`) → this is a new project, go to Step 2.
 
-Final implementation responses should include:
+### Step 2 — New project: seed memory from codebase
 
-```text
-Memory status:
-- EverOS: updated / not updated / not applicable
-- EverMind Archive candidate: generated / not generated / not applicable
-- Official EverMind Archive notes: committed / pending confirmation / not committed
+When no memories exist yet, explore the repository first:
+
+```
+evermind-code-graph cli index_repository '{"repo_path":"<absolute path>"}'
+evermind-code-graph cli get_architecture '{"project":"<project-name>"}'
 ```
 
+Then save what you found:
 
+```
+remember("Tech stack: <languages, frameworks, databases>", importance=1)
+remember("Entry point: <file> — run with <command>", importance=1)
+remember("Build command: <cmd>  Test command: <cmd>", importance=1)
+remember("Key modules: <summary>", importance=1)
+```
 
+## During Work
+
+**Before starting any feature or bug investigation:**
+```
+recall("topic or component name")
+```
+
+**When you find something worth keeping:**
+```
+remember("content", importance=1)
+```
+
+**For permanent decisions (architecture, critical bugs, permanent rules):**
+```
+remember("Decision: ...", importance=2)
+```
+
+## importance Values
+
+| Value | Layer | Retention | Use for |
+|-------|-------|-----------|---------|
+| 0 | working | 24h auto-expire | Temporary scratch notes |
+| 1 | episodic/semantic/procedural | Long-term | Project facts, events, workflows |
+| 2 | archive | Permanent | Architecture decisions, never-delete rules |
+
+## Auto Type Detection
+
+Memory type is inferred from content automatically:
+- "bug", "error", "fix", "crash" → episodic (bug event)
+- "decided", "chose", "decision" → semantic (decision)
+- "how to", "deploy", "steps", "procedure" → procedural
+- "prefer", "always", "never" → preference
+
+No need to set type manually.
+
+## When to use evermind-code-graph
+
+Use alongside EverMind when:
+- Starting work on an unfamiliar module
+- Need to trace callers before refactoring
+- Verifying change impact across files
+
+```
+evermind-code-graph cli search_code '{"project":"<name>","pattern":"<symbol>"}'
+evermind-code-graph cli trace_path '{"project":"<name>","function_name":"<fn>"}'
+```
+
+## Safety
+
+Never save API keys, tokens, passwords, private keys, or session credentials to memory.

@@ -1,120 +1,44 @@
-# EverMind unified configuration example.
-# Copy this file when you want one readable config that explains the whole stack.
-# Runtime secrets should still live in .env or your shell environment.
+# EverMind v2 Configuration Reference
+#
+# This file documents all available settings.
+# In practice, you rarely need to set anything — defaults work out of the box.
+# Configure via environment variables or the MCP server env block.
 
-runtime:
-  evermind_home:
-    windows: "D:\\EverMindMemory"
-    macos: "$HOME/.evermind"
-  everos_root:
-    windows: "D:\\EverMindMemory\\everos"
-    macos: "$HOME/.evermind/everos"
-  evermind_archive_root:
-    windows: "D:\\EverMindMemory\\evermind-archive"
-    macos: "$HOME/BasicMemory"
-  evermind_archive_candidate_dir:
-    windows: "D:\\EverMindMemory\\evermind-archive\\.candidates"
-    macos: "$HOME/BasicMemory/.candidates"
+storage:
+  # Directory for SQLite databases (one per project, auto-named from git remote)
+  home: ~/.evermind         # env: EVERMIND_HOME
 
-everos:
-  host: "127.0.0.1"
-  port: 3378
-  base_url: "http://127.0.0.1:3378"
-  timeout_seconds: 180
+  # Override auto-detected project space
+  # default_space: coding:my-project  # env: EVERMIND_DEFAULT_SPACE
 
-mcp:
-  backend: "everos"
-  user_id: "mcp-user"
-  default_space: "coding:<project-slug>"
-  archive_write_policy: "candidate"
+embedding:
+  # Local model (downloaded on first use, stored in HuggingFace cache)
+  model: BAAI/bge-small-zh-v1.5   # env: EVERMIND_EMBED_MODEL
+  enabled: true                     # env: EVERMIND_EMBED_ENABLED
 
-models:
-  llm:
-    model: "openai/gpt-4.1-mini"
-    base_url: "https://openrouter.ai/api/v1"
-    api_key_env: "EVEROS_LLM__API_KEY"
-  multimodal:
-    model: "google/gemini-3-flash-preview"
-    base_url: "https://openrouter.ai/api/v1"
-    api_key_env: "EVEROS_MULTIMODAL__API_KEY"
-  embedding:
-    model: "Qwen/Qwen3-Embedding-4B"
-    base_url: "https://api.deepinfra.com/v1/openai"
-    api_key_env: "EVEROS_EMBEDDING__API_KEY"
-  rerank:
-    model: "Qwen/Qwen3-Reranker-4B"
-    base_url: "https://api.deepinfra.com/v1/inference"
-    api_key_env: "EVEROS_RERANK__API_KEY"
+  # To use English-optimized model:
+  # model: all-MiniLM-L6-v2
 
-external_components:
-  archive_engine:
-    version: "0.22.1"
-    license: "AGPL-3.0"
-    install_source: "See third_party.lock.yaml"
-  code_graph_engine:
-    version: "v0.8.1"
-    license: "MIT"
-    install_source: "See third_party.lock.yaml"
+  # To use OpenAI embeddings instead of local model:
+  # api_key: sk-...                 # env: EVERMIND_EMBED_API_KEY
+  # model: text-embedding-3-small
 
-sync:
-  memory_mode: "local"
-  sync_mode: "off"
-  cloud_base_url: ""
-  cloud_api_key_env: "EVERMIND_CLOUD_API_KEY"
+llm_extraction:
+  # Optional: uses an LLM to extract structured facts from stored memories
+  # Without this key, memories are stored as raw text (still useful)
+  # api_key: sk-...                 # env: EVERMIND_LLM_API_KEY
+  # model: gpt-4o-mini              # env: EVERMIND_LLM_MODEL
+  # base_url: https://api.openai.com/v1  # env: EVERMIND_LLM_BASE_URL
 
-write_policy:
-  official_notes_require_confirmation: true
-  secrets_are_never_stored: true
-  evidence_required_for_code_facts: true
-  levels:
-    level_0_never_store:
-      action: "drop"
-      examples:
-        - "API keys, tokens, passwords, cookies, private keys, session credentials"
-        - "Low-value temporary logs"
-    level_1_realtime_memory:
-      action: "everos_remember"
-      examples:
-        - "Session context"
-        - "Short-lived project facts"
-        - "User preferences useful across sessions"
-    level_2_review_candidate:
-      action: "propose_basic_memory_update"
-      examples:
-        - "Architecture decisions"
-        - "Runtime configuration"
-        - "Known pitfalls"
-        - "Test strategy"
-    level_3_official_archive:
-      action: "commit_basic_memory_update"
-      requires_explicit_confirmation: true
-
-memory_router:
-  project_fact:
-    everos_space: "coding:<project-slug>"
-    archive_target: "项目概览.md"
-    write_level: "level_2_review_candidate"
-  architecture_decision:
-    everos_space: "coding:<project-slug>"
-    archive_target: "模块实现.md"
-    write_level: "level_2_review_candidate"
-  known_pitfall:
-    everos_space: "coding:<project-slug>"
-    archive_target: "已知坑点.md"
-    write_level: "level_2_review_candidate"
-  test_practice:
-    everos_space: "coding:<project-slug>"
-    archive_target: "测试与验证.md"
-    write_level: "level_2_review_candidate"
-  user_preference:
-    everos_space: "chat:preferences"
-    archive_target: null
-    write_level: "level_1_realtime_memory"
-  codebase_graph:
-    code_graph: true
-    everos_space: "coding:<project-slug>"
-    write_level: "level_1_realtime_memory"
-  secret_or_credential:
-    write_level: "level_0_never_store"
-
-
+# ── MCP Server ──────────────────────────────────────────────────────────────
+# The MCP server is started by the AI client (Claude Desktop / Cursor / Codex).
+# You do not need to start it manually.
+#
+# Minimum MCP config (add to claude_desktop_config.json):
+#
+#   "mcpServers": {
+#     "evermind": {
+#       "command": "uv",
+#       "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+#     }
+#   }

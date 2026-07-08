@@ -1,44 +1,51 @@
 ---
 name: evermind-archive
-description: Maintain reviewed, human-readable project knowledge in EverMind Archive. Use for initializing, updating, restructuring, or proposing durable project notes.
+description: Use for saving permanent, long-term project knowledge to EverMind. In v2, permanent knowledge is saved with remember(importance=2) — no separate propose/commit flow required.
 ---
 
 # EverMind Archive Skill
 
-EverMind Archive stores reviewed long-term project knowledge as Markdown files.
+In EverMind v2, "archive" is a memory layer — not a separate file system.
 
-## Rules
+Use `remember(content, importance=2)` to save permanent project knowledge directly.
+It goes into the archive layer immediately, never expires, and survives all sessions.
 
-- Use human-readable project notes, not chat summaries.
-- Split knowledge by topic; do not put everything in one file.
-- Write stable facts only.
-- Include evidence for code facts.
-- Never store secrets, tokens, cookies, passwords, private keys, or session credentials.
-- Use candidate-first writes. Official notes require explicit confirmation.
+## What belongs in the archive layer
 
-## Standard Files
+Save with `importance=2` when the information is:
 
-Each project should maintain:
+- An architecture decision and its rationale
+- A critical bug that was hard to find, and its fix
+- A permanent rule or convention for this codebase
+- A deployment or release procedure that rarely changes
+- A known dangerous area that future agents must not touch
 
-- `项目概览.md`
-- `目录结构.md`
-- `模块实现.md`
-- `运行与配置.md`
-- `数据与存储.md`
-- `接口与通信.md`
-- `测试与验证.md`
-- `已知坑点.md`
-- `修改记录.md`
-- `待办事项.md`
+## What does NOT belong in archive
 
-Large modules should use `模块-<中文模块名>.md`.
+- Temporary task notes → use `importance=0` (expires in 24h)
+- Regular project facts → use `importance=1` (long-term but not permanent)
+- API keys, tokens, credentials → never store these
 
-## Candidate Format
+## Format
 
-Every durable update should contain:
+When writing archive memories, be specific:
 
-- Reason: why this belongs in long-term memory.
-- Evidence: paths, commands, tests, or service checks.
-- Content: the note text to append or create.
+```
+remember(
+  "Decision: use PostgreSQL over SQLite for multi-user writes. "
+  "Reason: concurrent write locks caused failures in load testing (2026-07-01). "
+  "Verified: see tests/load/concurrent_write_test.py",
+  importance=2
+)
+```
 
+Include: what, why, evidence reference, and date if relevant.
 
+## Searching archive memories
+
+```
+recall("architecture decision postgres")
+recall("known bug auth module")
+```
+
+Results include a `layer` field — archive memories show `"layer": "archive"`.

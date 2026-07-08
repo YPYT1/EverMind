@@ -1,32 +1,52 @@
 ---
 name: project-memory
-description: Initialize or restructure a project's long-term memory files, including directory maps, module notes, configuration, tests, pitfalls, and change records.
+description: Initialize a new project's memory in EverMind. Use when opening a repository for the first time and briefing() returns empty (memory_count=0).
 ---
 
-# Project Memory Skill
+# Project Memory Initialization Skill
 
-Use when creating a new project memory archive or reorganizing existing notes.
+Use when `briefing()` returns `memory_count = 0` — the project has no memory yet.
 
-## Initialization Order
+## Initialization Steps
 
-1. `目录结构.md`
-2. `模块实现.md`
-3. `运行与配置.md`
-4. `数据与存储.md`
-5. `接口与通信.md`
-6. `测试与验证.md`
-7. `已知坑点.md`
-8. `项目概览.md`
-9. `修改记录.md`
-10. `待办事项.md`
+### 1. Explore the codebase
 
-## Split Module Notes When
+```
+evermind-code-graph cli index_repository '{"repo_path":"<absolute path to repo>"}'
+evermind-code-graph cli get_architecture '{"project":"<project-slug>"}'
+```
 
-- A module has its own entrypoint, state, data flow, or external dependency.
-- The module is likely to be changed independently later.
-- The note becomes too large to scan quickly.
+### 2. Seed core memories
 
-## Evidence
+Save these in order. Use `importance=1` for regular facts, `importance=2` for permanent architecture decisions.
 
-Every note should cite files, commands, or test results. If something is not verified, mark it as `未验证`.
+```
+remember("Tech stack: <languages, major frameworks, databases>", importance=1)
+remember("Entry point: <main file and how to run it>", importance=1)
+remember("Build: <command>  Test: <command>  Lint: <command>", importance=1)
+remember("Package manager: <npm/pip/cargo/etc> — install with: <command>", importance=1)
+remember("Key modules: <module A does X, module B does Y, ...>", importance=1)
+remember("Environment: <required env vars and where .env.example is>", importance=1)
+```
 
+### 3. Save architecture decisions as archive
+
+For each significant design decision you discover:
+
+```
+remember("Architecture: <decision and rationale>", importance=2)
+```
+
+## After Initialization
+
+Call `briefing()` again to verify the memories were stored. You should see `memory_count >= 4`.
+
+## Project Note Structure (optional reference format)
+
+When writing remember() content for long-term memories, cover:
+
+- **Purpose**: what this area is responsible for
+- **Entry points**: files, commands, functions, or routes
+- **Data flow**: inputs, outputs, state, external deps
+- **Change risks**: what future changes might break
+- **Evidence**: paths, commands, test results that verify the fact

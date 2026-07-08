@@ -2,19 +2,7 @@
   "mcpServers": {
     "evermind": {
       "command": "uv",
-      "args": ["run", "--directory", "<EVERMIND_ROOT>/mcp", "evermind-mcp"],
-      "env": {
-        "EVERMIND_MCP_BACKEND": "everos",
-        "EVEROS_BASE_URL": "http://127.0.0.1:3378",
-        "EVEROS_ROOT": "<EVEROS_ROOT>",
-        "EVEROS_TIMEOUT_SECONDS": "180",
-        "EVERMIND_ARCHIVE_ROOT": "<EVERMIND_ARCHIVE_ROOT>",
-        "EVERMIND_ARCHIVE_WRITE_POLICY": "candidate"
-      }
+      "args": ["run", "--directory", "<EVERMIND_ROOT>/mcp", "evermind-mcp"]
     }
   }
 }
-
-
-
-

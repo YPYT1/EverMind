@@ -1,101 +1,66 @@
 # Configuration
 
-EverMind keeps configuration simple by separating human-readable intent from runtime environment variables.
+EverMind v2 requires zero configuration for basic use. The MCP server is self-contained — no external service to start, no API keys needed.
 
-## Configuration Files
+## Minimum Config (required)
 
-| File | Purpose | Commit it? |
-| --- | --- | --- |
-| `config/evermind.example.yaml` | Human-readable full-system reference. It explains paths, MCP, models, write policy, routing, and future sync placeholders. | Yes |
-| `.env.example` | Environment variable template copied to `.env`. It is what scripts and MCP read at runtime. | Yes |
-| `.env` | Local machine paths, API keys, and runtime values. | No |
-| `generated/mcp-config/*` | Rendered snippets for Codex, Claude Code, Cursor, and Devin. | No |
+Add this to your Claude Desktop `claude_desktop_config.json` or Cursor `mcp.json`:
 
-`config/` intentionally contains one file. Multiple config files make first-time setup harder, so EverMind keeps the complete reference in `config/evermind.example.yaml`.
-
-## Placeholder Reference
-
-| Placeholder | What to fill in | Windows example | macOS example |
-| --- | --- | --- | --- |
-| `<EVERMIND_ROOT>` | The local path where this EverMind repository is cloned. It contains `README.md`, `skills/`, `agents/`, `templates/`, and `mcp/`. | `D:\Project\EverMind` | `$HOME/EverMind` |
-| `<EVEROS_ROOT>` | Runtime data root. This is where local memory files, indexes, logs, and runtime config live. It is not the source-code directory. | `D:\EverMindMemory\everos` | `$HOME/.evermind/everos` |
-| `<EVERMIND_ARCHIVE_ROOT>` | Reviewed EverMind Archive root. Official project notes live under `projects/<project-slug>/`; candidates live under `.candidates/`. | `D:\EverMindMemory\evermind-archive` | `$HOME/.evermind/archive` |
-| `<EVEROS_REPO>` | Optional path to a runtime source checkout, only needed when running the runtime from source. | `D:\Project\EverOS` | `$HOME/src/EverOS` |
-| `<CODEX_CONFIG_TOML>` | Codex config file where the `mcp_servers.evermind` snippet is pasted. | `%USERPROFILE%\.codex\config.toml` | `$HOME/.codex/config.toml` |
-| `<project-slug>` | Lowercase project identifier used in `coding:<project-slug>` and `projects/<project-slug>/`. Usually the repository folder name. | `my-app` | `my-app` |
-
-## Important Environment Variables
-
-### Runtime Paths
-
-```dotenv
-EVERMIND_HOME=
-EVEROS_ROOT=
-EVERMIND_ARCHIVE_ROOT=
-EVERMIND_ARCHIVE_CANDIDATE_DIR=
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
 ```
 
-- `EVERMIND_HOME` is the parent folder for local EverMind data.
-- `EVEROS_ROOT` is runtime data, not repository source code.
-- `EVERMIND_ARCHIVE_ROOT` is reviewed Markdown knowledge.
-- `EVERMIND_ARCHIVE_CANDIDATE_DIR` stores proposed updates before user confirmation.
+Replace `/path/to/EverMind` with the absolute path to your EverMind clone.
 
-### MCP
+Windows path example: `C:\\Users\\you\\EverMind`
 
-```dotenv
-EVERMIND_MCP_BACKEND=everos
-EVERMIND_MCP_DEFAULT_SPACE=
-EVERMIND_MCP_USER_ID=mcp-user
-EVERMIND_ARCHIVE_WRITE_POLICY=candidate
+That's it. Everything else is auto-detected:
+- **Project space**: detected from `git remote get-url origin` → `coding:<repo-slug>`
+- **Database location**: `~/.evermind/<slug>.db`
+- **Search mode**: FTS5 by default; hybrid if sqlite-vec is installed
+
+## Optional Environment Variables
+
+Set these in the `env` block of your MCP config, or in your shell environment.
+
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `EVERMIND_HOME` | `~/.evermind` | Directory where SQLite databases are stored |
+| `EVERMIND_DEFAULT_SPACE` | auto from git | Override project space (e.g. `coding:my-app`) |
+| `EVERMIND_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | Local embedding model name |
+| `EVERMIND_EMBED_ENABLED` | `true` | Set to `false` to disable embedding entirely |
+| `EVERMIND_LLM_API_KEY` | none | API key for LLM-powered fact extraction (optional) |
+| `EVERMIND_LLM_MODEL` | `gpt-4o-mini` | LLM model for fact extraction |
+| `EVERMIND_LLM_BASE_URL` | OpenAI | Custom LLM endpoint (e.g. OpenRouter) |
+
+## Enable Vector Search (recommended)
+
+```bash
+cd /path/to/EverMind/mcp
+uv pip install sqlite-vec sentence-transformers
 ```
 
-Use `candidate` as the default archive write policy. It lets agents propose durable notes without silently committing them.
+After installing, `recall()` automatically switches to hybrid BM25 + vector search. The embedding model downloads once on first use (~22MB).
 
-### Models
+## MCP Config Templates
 
-```dotenv
-EVEROS_LLM__MODEL=
-EVEROS_LLM__API_KEY=
-EVEROS_LLM__BASE_URL=
+Ready-to-use config files are in `templates/mcp-config/`:
 
-EVEROS_EMBEDDING__MODEL=
-EVEROS_EMBEDDING__API_KEY=
-EVEROS_EMBEDDING__BASE_URL=
+| File | Platform | Client |
+|------|---------|--------|
+| `claude-code.windows.json` | Windows | Claude Desktop |
+| `claude-code.macos.json` | macOS | Claude Desktop |
+| `cursor.windows.json` | Windows | Cursor |
+| `cursor.macos.json` | macOS | Cursor |
+| `codex.windows.toml` | Windows | Codex |
+| `codex.macos.toml` | macOS | Codex |
+| `devin.example.json` | Any | Devin |
 
-EVEROS_RERANK__MODEL=
-EVEROS_RERANK__API_KEY=
-EVEROS_RERANK__BASE_URL=
-```
-
-Model keys belong in `.env` or your shell environment. Never paste API keys into MCP snippets, agent instructions, README files, or archive notes.
-
-### Future Cloud Mode
-
-```dotenv
-EVERMIND_MEMORY_MODE=local
-EVERMIND_SYNC_MODE=off
-EVERMIND_CLOUD_BASE_URL=
-EVERMIND_CLOUD_API_KEY=
-```
-
-These values are reserved for future local-to-cloud modes. v1 remains local-first.
-
-## Generated MCP Config
-
-Setup scripts render snippets into:
-
-```text
-generated/mcp-config/codex.toml
-generated/mcp-config/claude-code.json
-generated/mcp-config/cursor.json
-generated/mcp-config/devin.json
-```
-
-Generated snippets include local paths and should be treated as machine-specific output.
-
-## Windows Path Note
-
-Windows generated TOML uses `/` path separators such as `D:/Project/EverMind/mcp`. This avoids TOML string escaping problems with backslashes.
-
-JSON snippets can safely use normal escaped Windows paths.
-
+Replace `<EVERMIND_ROOT>` with your actual EverMind clone path.

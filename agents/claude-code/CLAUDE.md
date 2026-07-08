@@ -103,3 +103,27 @@ evermind-code-graph cli trace_path '{"project":"<name>","function_name":"<functi
 ## Safety
 
 Never save API keys, tokens, passwords, private keys, or session credentials.
+
+---
+
+## Skills
+
+EverMind includes skills that shape agent behavior. To load the core skill, add to your CLAUDE.md:
+
+```
+$evermind
+```
+
+Or reference the full path:
+
+```
+$D:/path/to/EverMind/skills/evermind/SKILL.md
+```
+
+Available skills:
+- `$evermind` — core memory workflow (session start, remember, recall)
+- `$evermind-archive` — permanent knowledge storage patterns
+- `$evermind-code-graph` — codebase exploration and impact analysis
+- `$project-memory` — first-time project memory initialization
+
+Note: this file already contains the full session start protocol inline. Load `$evermind` in your own project's CLAUDE.md to get the same behavior without copying this file.

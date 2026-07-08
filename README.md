@@ -70,6 +70,40 @@ EverMind solves this by giving agents a reliable place to store and retrieve tha
 
 Storage: `~/.evermind/<project-slug>.db` — one SQLite file per project, name auto-detected from git remote.
 
+## How EverMind Works
+
+EverMind has two components that work together:
+
+**MCP Server** — the tools Claude Code calls directly:
+
+| Tool | What it does |
+|------|-------------|
+| `briefing()` | Load project context at session start |
+| `remember(content, importance)` | Save information to memory |
+| `recall(query)` | Search memory (keyword + semantic) |
+| `forget(id)` | Delete a specific memory |
+
+**Skills** — instruction files that tell Claude *when* and *how* to use the tools:
+
+- `skills/evermind/SKILL.md` — core workflow: session start protocol, when to remember
+- `skills/evermind-archive/SKILL.md` — permanent knowledge patterns
+- `skills/evermind-code-graph/SKILL.md` — codebase exploration
+- `skills/project-memory/SKILL.md` — first-time project initialization
+
+Reference a skill from your `CLAUDE.md` or `AGENTS.md`:
+
+```markdown
+$evermind
+```
+
+Or with full path if the skill isn't on your skills search path:
+
+```markdown
+$D:/path/to/EverMind/skills/evermind/SKILL.md
+```
+
+> **Both components are needed.** The MCP server gives Claude the ability to remember things. The skills tell Claude when to use that ability.
+
 ## Quick Start
 
 ### 1. Clone

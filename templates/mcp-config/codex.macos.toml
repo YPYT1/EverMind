@@ -1,16 +1,4 @@
 [mcp_servers.evermind]
 type = "stdio"
 command = "uv"
-args = ["run", "--directory", "$HOME/EverMind/mcp", "evermind-mcp"]
-
-[mcp_servers.evermind.env]
-EVERMIND_MCP_BACKEND = "everos"
-EVEROS_BASE_URL = "http://127.0.0.1:3378"
-EVEROS_ROOT = "$HOME/.evermind/everos"
-EVEROS_TIMEOUT_SECONDS = "180"
-EVERMIND_ARCHIVE_ROOT = "$HOME/BasicMemory"
-EVERMIND_ARCHIVE_WRITE_POLICY = "candidate"
-
-
-
-
+args = ["run", "--directory", "<EVERMIND_ROOT>/mcp", "evermind-mcp"]

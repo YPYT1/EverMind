@@ -50,4 +50,23 @@ remember("Build/test command: ...", importance=1)
 | procedural | Long-term | Deploy steps, workflows |
 | archive | Permanent | Architecture decisions |
 
+---
+
+## Codebase Tools
+
+Use evermind-code-graph when working on unfamiliar code or before large changes:
+
+```
+evermind-code-graph cli index_repository '{"repo_path":"<absolute path>"}'
+evermind-code-graph cli get_architecture '{"project":"<project-name>"}'
+evermind-code-graph cli search_code '{"project":"<name>","pattern":"<symbol>"}'
+evermind-code-graph cli trace_path '{"project":"<name>","function_name":"<fn>"}'
+```
+
+Typical patterns:
+- New unfamiliar module → get_architecture → recall() for prior decisions
+- Before refactor → trace_path to check callers → recall() for past decisions
+
+---
+
 **Safety**: Never save API keys, tokens, passwords, or credentials.

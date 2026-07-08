@@ -1,19 +1,4 @@
 [mcp_servers.evermind]
-# Replace placeholders before pasting.
-# <EVERMIND_ROOT>: path to this EverMind checkout.
-# <EVEROS_ROOT>: EverOS runtime data root, e.g. D:\EverMindMemory\everos.
-# <EVERMIND_ARCHIVE_ROOT>: reviewed EverMind Archive archive root.
 type = "stdio"
 command = "uv"
 args = ["run", "--directory", "<EVERMIND_ROOT>/mcp", "evermind-mcp"]
-
-[mcp_servers.evermind.env]
-EVERMIND_MCP_BACKEND = "everos"
-EVEROS_BASE_URL = "http://127.0.0.1:3378"
-EVEROS_ROOT = "<EVEROS_ROOT>"
-EVEROS_TIMEOUT_SECONDS = "180"
-EVERMIND_ARCHIVE_ROOT = "<EVERMIND_ARCHIVE_ROOT>"
-EVERMIND_ARCHIVE_WRITE_POLICY = "candidate"
-
-
-
