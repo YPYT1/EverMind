@@ -1,233 +1,215 @@
 <div align="center">
 
+<img src="./png/everymind.png" alt="EverMind" width="180" />
+
 # EverMind
 
-**面向 AI 辅助软件工程的本地优先上下文持久化系统。**
+**本地优先的六层 AI 记忆系统，专为编程助手设计。**  
+零配置。零云依赖。直接接入 Claude Code、Cursor、Codex。
 
-[![EverMind](https://img.shields.io/badge/EverMind-Context%20Persistence-2E86AB?style=flat-square)](https://github.com/YPYT1/EverMind)
-[![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
-[![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
-[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](docs/quickstart-windows.md)
-[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](docs/quickstart-macos.md)
+[![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
+[![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
+[![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?style=flat-square)](#架构)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](scripts/setup-windows.ps1)
+[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](scripts/setup-macos.sh)
 
-[快速开始](#安装与使用) · [系统架构](#系统架构) · [核心概念](#核心概念) · [集成方式](#集成方式) · [文档](docs/README.zh-CN.md) · [English](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
+[快速开始](#快速开始) · [架构](#架构) · [MCP 工具](#mcp-工具) · [安装](#安装) · [文档](docs/README.md) · [English](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
 
 </div>
 
-## 一句话定义
+---
 
-EverMind 是一层面向 AI 辅助软件工程的本地记忆基础设施。
+## EverMind 是什么？
 
-它让项目上下文能够跨会话持续存在，把快速工作记忆和经过审核的长期知识分开，并为 coding agents 提供恢复、检索、演化和验证项目知识的稳定入口。
+EverMind 为 AI 编程助手提供跨会话的持久记忆。它通过 MCP 直接嵌入 Claude Code、Cursor 和 Codex — 无需云服务，无需独立进程，无需 API Key，只需指向你的仓库即可使用。
 
-EverMind 不是 Agent 框架，不是向量数据库，也不是单独的 RAG 应用。它更接近 AI 编码系统下面的上下文持久化层。
+记忆按照人类存储知识的方式组织为六层：自动过期的工作笔记、情节事件、语义事实、流程知识、永久归档决策，以及实体关系图谱。系统根据内容和重要性自动选择合适的层级。
 
 ## 行业问题
 
-AI coding agents 通常受限于短生命周期上下文。即使它们能读文件、能调用工具，也会在会话之间丢失关键工程语境：
+AI 助手在每次会话之间会遗忘一切：
 
-- 某个模块为什么这样设计；
-- 哪条命令能验证某个行为；
-- 运行数据、索引和生成文件放在哪里；
-- 之前失败过的实现细节是什么；
-- 哪些事实已经稳定到可以成为项目知识；
-- 哪些内容只是临时观察，不应该污染长期文档。
+- 某个模块为什么要这样设计
+- 哪条命令真正能构建或测试项目
+- 已知的 bug 及有效的修复方法
+- 部署流程和注意事项
+- 个人偏好和编码规范
 
-RAG 和向量搜索能帮助找文本，但它们没有定义完整的知识生命周期。Agent 框架能调度行为，但通常不负责项目知识的长期可信沉淀。EverMind 解决的正是这个中间层问题。
+EverMind 为 AI 助手提供一个可靠的地方来存储和检索这些知识。
 
-## 核心解决方案
-
-EverMind 把记忆建模为生命周期，而不是一次存储操作。
-
-核心抽象是：
+## 架构
 
 ```text
-工作上下文 -> 可检索记忆 -> 已审核知识 -> 可复用项目智能
+          Claude Code / Cursor / Codex
+                     |
+                  MCP (stdio)
+                     |
+           +-----------------------+
+           |   EverMind v2 核心    |
+           |                       |
+           |  remember / recall    |
+           |  forget  / briefing   |
+           +-----------+-----------+
+                       |
+           +-----------v-----------+
+           |   SQLite              |
+           |  (每个项目一个文件)   |
+           |                       |
+           |  第1层: 工作记忆      |  24小时自动过期
+           |  第2层: 情节记忆      |  事件和发现
+           |  第3层: 语义记忆      |  项目事实
+           |  第4层: 流程记忆      |  操作知识
+           |  第5层: 归档记忆      |  永久决策
+           |  第6层: 图谱记忆      |  实体关系
+           |                       |
+           |  FTS5 关键词搜索      |
+           |  sqlite-vec 向量搜索  |
+           |  事件日志             |
+           +-----------------------+
 ```
 
-这让 AI 编码系统获得三个基础能力：
+存储路径：`~/.evermind/<project-slug>.db` — 每个项目一个 SQLite 文件，从 git remote 自动推断项目名称。
 
-- **连续性**：下一次会话可以从已有项目上下文开始。
-- **结构性**：记忆按项目、agent、长期档案和代码图谱分层路由。
-- **可信性**：长期知识进入正式档案前需要经过候选和确认。
+## 快速开始
 
-## 系统架构
-
-EverMind 位于 AI coding agents 和本地知识存储之间。
-
-```text
-AI Coding Interfaces
-  Codex / Claude Code / Cursor / Devin
-  agent instructions and skills
-  generated MCP configuration
-
-EverMind Orchestration Layer
-  setup and health checks
-  EverMind MCP bridge
-  memory routing
-  write policy
-  archive candidate flow
-  code graph access
-
-Local Knowledge Substrate
-  realtime project memory
-  reviewed Markdown archive
-  repository graph index
-  runtime configuration and local paths
-```
-
-这种结构让不同 agent 客户端可以共享同一种记忆语义；策略层负责决定记忆是检索、写入、生成候选还是忽略；本地知识层负责真正持久化。
-
-## 核心概念
-
-### 上下文持久化
-
-项目上下文不应该随着聊天窗口消失。EverMind 让 agent 能恢复历史决策、运行约定、已知坑点和验证方式。
-
-### 记忆生命周期
-
-EverMind 不把所有记忆视为同一种数据：
-
-1. `briefing`：任务开始时恢复项目上下文。
-2. `recall`：检索相关历史记忆。
-3. `remember`：保存有价值的工作事实。
-4. `propose_basic_memory_update`：生成长期档案候选。
-5. `commit_basic_memory_update`：用户确认后才提升为正式知识。
-
-### 已审核知识
-
-长期项目知识应该稳定、有证据、可阅读。EverMind Archive 使用 Markdown 保存正式知识，便于阅读、diff、备份和迁移。
-
-### 代码库上下文
-
-软件记忆不只是文字。Agent 还需要架构、调用链、代码片段和影响范围。EverMind 通过 Code Graph 把记忆与真实代码结构连接起来。
-
-### 本地优先
-
-默认部署把记忆和项目知识保留在本机。未来云同步可以作为可选模式，但不是 v1 的前提。
-
-## 核心能力
-
-| 能力 | 说明 |
-| --- | --- |
-| 会话恢复 | 通过 briefing 启动任务，而不是每次冷启动阅读项目。 |
-| 语义检索 | 检索项目事实、历史决策、坑点和偏好。 |
-| 工作记忆 | 在开发过程中保存有价值的上下文。 |
-| 审核式档案 | 只有确认后的事实才进入正式 Markdown 知识库。 |
-| 代码图谱理解 | 支持架构、调用链、代码搜索、片段和影响分析。 |
-| 多 agent 复用 | Codex、Claude Code、Cursor、Devin 可使用同一套记忆系统。 |
-| 本地安装自动化 | 生成 `.env`、MCP snippets、skills 链接和健康检查。 |
-
-## 使用场景
-
-- 隔几天继续开发某个功能，不需要重新阅读整个仓库。
-- 修改模块前，让 agent 回忆之前的架构决策。
-- 把测试命令、运行路径和已知坑点沉淀成项目知识。
-- 完成任务后生成带证据的变更记忆候选。
-- 修改共享函数前分析调用链和影响范围。
-- 在多个 AI 编码工具之间共享同一套本地项目记忆。
-
-## 安装与使用
-
-<details>
-<summary><strong>Windows：交互式配置</strong></summary>
-
-```powershell
-git clone https://github.com/YPYT1/EverMind.git
-cd EverMind
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\configure.ps1
-```
-
-</details>
-
-<details>
-<summary><strong>Windows：完整 bootstrap 和检查</strong></summary>
-
-```powershell
-git clone https://github.com/YPYT1/EverMind.git
-cd EverMind
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\bootstrap.ps1
-```
-
-</details>
-
-<details>
-<summary><strong>macOS：交互式配置</strong></summary>
+### 1. 克隆仓库
 
 ```bash
 git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
-bash scripts/macos/configure.sh
 ```
 
-</details>
+### 2. 运行安装脚本
 
-<details>
-<summary><strong>macOS：完整 bootstrap 和检查</strong></summary>
+**Windows：**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
+```
+
+**macOS / Linux：**
 
 ```bash
-git clone https://github.com/YPYT1/EverMind.git
-cd EverMind
-bash scripts/macos/bootstrap.sh
+bash scripts/setup-macos.sh
 ```
 
-</details>
+脚本会检查 Python 3.11+，在缺少时安装 uv，同步依赖，并自动配置 Claude Desktop 和 Cursor。
 
-配置后复制对应工具的 MCP 配置：
+### 3. 手动配置（可选）
 
-```text
-generated/mcp-config/codex.toml
-generated/mcp-config/claude-code.json
-generated/mcp-config/cursor.json
-generated/mcp-config/devin.json
+在 `claude_desktop_config.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
 ```
 
-然后在 agent 中使用：
+将 `/path/to/EverMind` 替换为实际的克隆路径，这是唯一需要修改的地方。
 
-```text
-Use EverMind. Start with briefing for this project, then recall known pitfalls.
+### 4. 启用向量搜索（可选，推荐）
+
+```bash
+cd mcp
+uv pip install sqlite-vec sentence-transformers
 ```
 
-## 集成方式
+不安装也可以使用 FTS5 关键词搜索。安装后，`recall()` 使用 BM25 + 向量 KNN 混合搜索，语义查询效果显著更好。
 
-EverMind 通过 MCP 和 agent 指令文件接入。
+## MCP 工具
 
-```text
-Agent client
-  -> generated MCP snippet
-  -> uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-  -> EverMind MCP tools
-  -> local memory, archive, and code graph layers
+| 工具 | 说明 |
+|------|------|
+| `remember(content, importance, tags)` | 保存记忆。importance: 0=工作(24h), 1=长期, 2=永久 |
+| `recall(query, limit, mode)` | 混合搜索：BM25+语义，自动从 git 检测项目空间 |
+| `forget(id)` | 按 ID 删除记忆 |
+| `briefing()` | 加载会话上下文：当前项目的最近和重要记忆 |
+
+记忆类型从内容自动检测：bug 修复→情节记忆，架构决策→语义记忆，部署步骤→流程记忆。对于永远不想被删除的内容，设置 `importance=2`。
+
+## 安装
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
-模板位置：
+脚本功能：
+- 检查 Python 3.11+、uv、git
+- 如未找到 uv，提供自动安装选项
+- 在 mcp 目录运行 `uv sync`
+- 自动更新 Claude Desktop 和 Cursor 的 MCP 配置
+- 创建 `~/.evermind` 记忆目录
 
-- Codex：`agents/codex/AGENTS.md`
-- Claude Code：`agents/claude-code/CLAUDE.md`
-- Cursor：`agents/cursor/rules.md`
-- Devin：`agents/devin/instructions.md`
+### macOS
 
-## 路线图
+```bash
+bash scripts/setup-macos.sh
+```
 
-- 改进托管机器上的非交互式安装。
-- 扩展大型仓库的长期档案模板。
-- 增强 MCP 启动失败诊断。
-- 保持本地优先作为默认运行模式。
-- 预留可选云同步，但不把云记忆作为强依赖。
+与 Windows 步骤相同，使用 macOS 配置路径（`~/Library/Application Support/Claude/`）。
 
-## Community and Support
+### 手动安装
 
-欢迎 issue 和 pull request。如果 EverMind 对你的本地 AI 记忆工作流有帮助，star、反馈或小额支持都会让项目继续向前。
+```bash
+# 安装依赖
+uv sync --directory mcp
+
+# 可选：启用向量搜索（推荐）
+cd mcp && uv pip install sqlite-vec sentence-transformers
+```
+
+## 记忆生命周期
+
+| 层级 | 保留时间 | 用途 |
+|------|---------|------|
+| 工作记忆 | 24 小时 | 临时笔记、进行中的上下文 |
+| 情节记忆 | 长期 | 事件、bug 修复、发现 |
+| 语义记忆 | 长期 | 项目相关事实 |
+| 流程记忆 | 长期 | 部署步骤、工作流、操作指南 |
+| 归档记忆 | 永久 | 架构决策、永久规则 |
+| 图谱记忆 | 永久 | 实体关系（Phase 3） |
+
+- `importance=0` — 工作层（默认，24小时后过期）
+- `importance=1` — 长期层（根据内容类型自动分类）
+- `importance=2` — 归档层（永不删除）
+
+## Agent 指令
+
+在 `CLAUDE.md` 或 `AGENTS.md` 中添加：
+
+```markdown
+## EverMind Memory
+
+Call briefing() at session start to restore project context.
+Call remember(content) for anything worth keeping across sessions.
+Call recall(query) before starting work on a feature or bug.
+
+importance=0: temporary working note (default)
+importance=1: long-term memory
+importance=2: permanent archive (architecture decisions, critical bugs)
+```
+
+## 文档
+
+- [架构设计](docs/architecture.md)
+- [MCP 工具参考](docs/mcp-tools.md)
+- [配置说明](docs/configuration.md)
+- [Windows 快速开始](docs/quickstart-windows.md)
+- [macOS 快速开始](docs/quickstart-macos.md)
+- [故障排除](docs/troubleshooting.md)
+- [v2 重设计方案](docs/v2-redesign.md)
+
+---
 
 <div align="center">
-  <p><strong>EverMind 交流群</strong></p>
-  <img src="png/EverMind3群.png" alt="EverMind 交流群二维码" width="260">
-</div>
-
-<div align="center">
-  <p><strong>支持项目</strong></p>
-  <img src="png/Alipay.jpg" alt="支付宝支持二维码" width="220">
-  <img src="png/wecha.png" alt="微信支持二维码" width="220">
+为希望 AI 工具真正记住事情的工程师而构建。
 </div>

@@ -1,7 +1,7 @@
 [project]
 name = "evermind-mcp"
-version = "0.5.6"
-description = "EverMind MCP bridge for local-first AI coding memory"
+version = "2.0.0"
+description = "EverMind v2 - Local-first 6-layer AI memory system (zero config)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -18,13 +18,18 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.optional-dependencies]
+vector = ["sqlite-vec>=0.1.6"]
+embedding = ["sentence-transformers>=3.0"]
+full = ["sqlite-vec>=0.1.6", "sentence-transformers>=3.0"]
+
 [project.urls]
 Homepage = "https://github.com/YPYT1/EverMind"
 Repository = "https://github.com/YPYT1/EverMind"
 Issues = "https://github.com/YPYT1/EverMind/issues"
 
 [project.scripts]
-evermind-mcp = "evermind_mcp.server:main"
+evermind-mcp = "evermind_mcp.server_v2:main_sync"
 
 [build-system]
 requires = ["hatchling"]
