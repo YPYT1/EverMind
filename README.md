@@ -252,12 +252,18 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 </div>
 
 <div align="center">
-
-<img src="./png/wecha.png" width="200" /><br/>
+<table>
+<tr>
+<td align="center">
+<img src="./png/wecha.png" width="200"/><br/>
 <sub>WeChat</sub>
-
-<img src="./png/Alipay.jpg" width="200" /><br/>
+</td>
+<td align="center">
+<img src="./png/Alipay.jpg" width="200"/><br/>
 <sub>Buy me a coffee ☕</sub>
+</td>
+</tr>
+</table>
 </div>
 
 <div align="center">
