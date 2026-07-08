@@ -1,7 +1,7 @@
 [project]
 name = "evermind-mcp"
 version = "2.0.0"
-description = "EverMind v2 — MCP server for local AI memory. 6-layer persistent recall across sessions with zero config. No cloud, no external service."
+description = "EverMind v2 — MCP server for local AI memory. 6-layer persistent recall with graph, zero config. No cloud, no external service."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -18,7 +18,6 @@ classifiers = [
 ]
 dependencies = [
     "mcp>=1.0.0",
-    "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
 ]
 

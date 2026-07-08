@@ -60,7 +60,7 @@ EverMind solves this by giving agents a reliable place to store and retrieve tha
            |  Layer 3: semantic    |  project facts
            |  Layer 4: procedural  |  how-to knowledge
            |  Layer 5: archive     |  permanent decisions
-           |  Layer 6: graph       |  entity relationships
+           |  Layer 6: graph       |  entity relationships (auto-extracted from content)
            |                       |
            |  FTS5 keyword search  |
            |  sqlite-vec KNN       |
@@ -129,6 +129,24 @@ bash scripts/setup-macos.sh
 
 The script checks Python 3.11+, installs uv if missing, syncs dependencies, and auto-configures Claude Desktop and Cursor.
 
+### About evermind-code-graph
+
+EverMind's session start protocol uses `evermind-code-graph` to explore the codebase when opening a new project. This is a **separate optional tool** not included in this repository.
+
+**If you have evermind-code-graph installed:** the new-project initialization runs automatically as described.
+
+**If you don't have evermind-code-graph:** use this fallback for new project initialization:
+
+```
+remember("Tech stack: <manually describe languages, frameworks, databases>", importance=1)
+remember("Entry point: <main file> — run with: <command>", importance=1)
+remember("Key structure: <brief description of main folders and their purpose>", importance=1)
+```
+
+You can gather this information by reading the README, package.json/pyproject.toml/Cargo.toml, and main entry files yourself.
+
+---
+
 ### 3. Manual config (optional)
 
 Add to your `claude_desktop_config.json`:
@@ -163,6 +181,8 @@ Without these, EverMind uses FTS5 keyword search. With them, `recall()` runs hyb
 | `recall(query, limit, mode)` | Hybrid BM25 + semantic search. Auto-detects project from git |
 | `forget(id)` | Delete a memory by ID |
 | `briefing()` | Load session context: recent + important memories for this project |
+| `list(layer, tags, limit)` | List memories filtered by layer and/or tags |
+| `graph_explore(entity)` | Explore entity relationships in the knowledge graph |
 
 Memory type is auto-detected from content: bug fixes → episodic, architecture decisions → semantic, deploy steps → procedural. Set `importance=2` for things you never want deleted.
 
@@ -208,7 +228,7 @@ cd mcp && uv pip install sqlite-vec sentence-transformers
 | semantic | Long-term | Facts about the project |
 | procedural | Long-term | Deploy steps, workflows, how-to |
 | archive | Permanent | Architecture decisions, permanent rules |
-| graph | Permanent | Entity relationships (Phase 3) |
+| graph | Permanent | Entity relationships (auto-extracted from content) |
 
 - `importance=0` — working layer (default, expires in 24h)
 - `importance=1` — long-term layer (auto-classified by content type)

@@ -1,7 +1,7 @@
 """
-EverMind MCP Server v2 — 4-tool interface.
+EverMind MCP Server v2 — 7-tool interface.
 
-Tools: remember, recall, forget, briefing
+Tools: remember, recall, forget, briefing, list, graph_explore
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ TOOLS: list[types.Tool] = [
             "search not installed). Automatically searches the current project space. Returns memories "
             "ranked by relevance. Use before starting a feature, investigating a bug, or when unsure "
             "about a prior decision. Parameters: query (what to search), limit (max results, default 10), "
-            "mode (hybrid/fts/semantic)."
+            "mode (hybrid/fts/semantic), layer (filter by memory layer), tags (filter by tags)."
         ),
         inputSchema={
             "type": "object",
@@ -91,6 +91,16 @@ TOOLS: list[types.Tool] = [
                     "type": "string",
                     "enum": ["hybrid", "fts", "semantic"],
                     "default": "hybrid",
+                },
+                "layer": {
+                    "type": "string",
+                    "enum": ["working", "episodic", "semantic", "procedural", "archive"],
+                    "description": "Filter by memory layer (optional)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tags (optional)",
                 },
             },
             "required": ["query"],
@@ -128,6 +138,55 @@ TOOLS: list[types.Tool] = [
             "required": [],
         },
     ),
+    types.Tool(
+        name="list",
+        description=(
+            "Browse stored memories filtered by layer or tags. Use to audit what is in memory, "
+            "find archive-layer decisions, or see all procedural memories. If no filters given, "
+            "returns most recent and important memories."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "layer": {
+                    "type": "string",
+                    "enum": ["working", "episodic", "semantic", "procedural", "archive"],
+                    "description": "Filter by layer (optional)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tags (optional)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Max results",
+                },
+            },
+            "required": [],
+        },
+    ),
+    types.Tool(
+        name="graph_explore",
+        description=(
+            "Find all memories related to a specific entity (file, class, function, module, concept). "
+            "EverMind automatically extracts entities from memories and builds a relationship graph. "
+            "Use to find everything known about 'auth.py', 'UserService', or any named concept."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "Entity name to search for (file path, class name, function name, module name)",
+                },
+            },
+            "required": ["entity"],
+        },
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -161,6 +220,8 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
                 query=args["query"],
                 limit=args.get("limit", 10),
                 mode=args.get("mode", "hybrid"),
+                layer=args.get("layer"),
+                tags=args.get("tags"),
             )
 
         elif name == "forget":
@@ -168,6 +229,16 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
 
         elif name == "briefing":
             result = await _svc.briefing()
+
+        elif name == "list":
+            result = await _svc.list_memories(
+                layer=args.get("layer"),
+                tags=args.get("tags"),
+                limit=args.get("limit", 20),
+            )
+
+        elif name == "graph_explore":
+            result = await _svc.graph_explore(args["entity"])
 
         else:
             result = {"error": f"Unknown tool: {name}", "tool": name}

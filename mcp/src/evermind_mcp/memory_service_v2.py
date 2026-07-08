@@ -108,6 +108,14 @@ class MemoryService:
         )
         self.embedder.set_callback(self._on_embedding_ready)
         self.space = config.default_space
+
+        # CHANGE 6: Check embedding dimension matches storage expectation
+        if self.embedder.available:
+            actual_dim = self.embedder.dim
+            if not self.storage.check_embed_dim(actual_dim):
+                logger.warning("Vector search disabled due to embedding dimension mismatch.")
+                self.embedder._enabled = False
+
         # Single persistent briefing worker (replaces per-call thread spawning)
         self._briefing_event = threading.Event()
         self._briefing_worker = threading.Thread(
@@ -153,24 +161,7 @@ class MemoryService:
                 "similar_merged": True,
             }
 
-        # Dedup check via FTS similarity (fuzzy near-duplicate detection)
-        similar = self.storage.find_similar_fts(content, space, threshold=DEDUP_THRESHOLD)
-        if similar:
-            top = similar[0]
-            top_score = top.score if hasattr(top, "score") else 0.0
-            top_importance = top.importance if hasattr(top, "importance") else 0
-            if top_score > DEDUP_MERGE_THRESHOLD and importance <= top_importance:
-                # Merge into existing memory
-                self.storage.update_memory_content(top.id, content)
-                self.storage.log_event(space, "remember_merged", top.id, {"importance": importance})
-                logger.debug("Memory merged into existing id=%s score=%.3f", top.id, top_score)
-                return {
-                    "id": top.id,
-                    "action": "merged",
-                    "layer": layer,
-                    "type": memory_type,
-                    "similar_merged": True,
-                }
+        # fuzzy dedup removed - too noisy, exact match only now
 
         # Insert new memory
         memory = self.storage.insert_memory(
@@ -188,6 +179,13 @@ class MemoryService:
 
         # Log the event
         self.storage.log_event(space, "remember", memory.id, {"importance": importance})
+
+        # CHANGE 4: Graph integration - link entities after insert
+        if self.config.graph_enabled:
+            entities = self.storage.extract_entities_from_content(content)
+            if entities:
+                self.storage.link_memory_to_entities(memory.id, space, entities)
+                logger.debug("Graph: linked %d entities to memory %s", len(entities), memory.id)
 
         # Trigger briefing refresh in background if important enough
         if importance >= 1:
@@ -207,7 +205,9 @@ class MemoryService:
         query: str,
         limit: int = 10,
         mode: str = "hybrid",
-        space: Optional[str] = None,
+        space: str = None,
+        layer: str = None,
+        tags: list = None,
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
@@ -227,13 +227,15 @@ class MemoryService:
 
         # Full-text search
         if mode in ("hybrid", "fts"):
-            fts_results = self.storage.search_fts(query, space, limit=limit * 2)
+            fts_results = self.storage.search_fts(query, space, limit=limit * 2, layer=layer, tags=tags)
 
         # Semantic / vector search
         if mode in ("hybrid", "semantic"):
             vec = self.embedder.encode(query)
             if vec is not None:
                 vec_results = self.storage.search_vec(vec, space, limit=limit * 2)
+                if layer:
+                    vec_results = [r for r in vec_results if r.layer == layer]
 
         # Fuse results
         if fts_results and vec_results:
@@ -282,6 +284,22 @@ class MemoryService:
             "query": query,
         }
 
+    async def list_memories(
+        self,
+        layer: str = None,
+        tags: list = None,
+        limit: int = 20,
+    ) -> dict:
+        """List memories with optional layer and tags filter."""
+        space = self.space
+        self.storage.expire_working_memories(space)
+        memories = self.storage.list_memories(space, layer=layer, tags=tags, limit=limit)
+        return {
+            "memories": [m.to_dict() for m in memories],
+            "count": len(memories),
+            "filter": {"layer": layer, "tags": tags},
+        }
+
     async def forget(self, memory_id: str) -> dict:
         """Permanently delete a memory by ID."""
         deleted = self.storage.delete_memory(memory_id)
@@ -302,9 +320,23 @@ class MemoryService:
         now_ms = int(time.time() * 1000)
 
         if cache is None or (now_ms - cache.updated_at) > BRIEFING_CACHE_TTL_MS:
-            cache = self.storage.refresh_briefing_cache(self.space)
+            cache = self.storage.refresh_briefing_cache(
+                self.space,
+                recent_limit=self.config.briefing_recent,
+                important_limit=self.config.briefing_important,
+            )
 
         return cache.to_dict()
+
+    async def graph_explore(self, entity: str) -> dict:
+        """Explore graph relationships for a given entity."""
+        space = self.space
+        results = self.storage.search_graph(space, entity, limit=10)
+        return {
+            "entity": entity,
+            "related_memories": results,
+            "count": len(results),
+        }
 
     async def status(self) -> dict:
         """Return service health and storage statistics."""
@@ -344,11 +376,19 @@ class MemoryService:
         else:
             logger.warning("No rowid found for memory_id=%s; embedding discarded", memory_id)
 
-        self._signal_briefing_refresh()
+        self.storage.refresh_briefing_cache(
+            self.space,
+            recent_limit=self.config.briefing_recent,
+            important_limit=self.config.briefing_important,
+        )
 
     def _refresh_briefing_bg(self) -> None:
         """Background thread target: refresh the briefing cache silently."""
         try:
-            self.storage.refresh_briefing_cache(self.space)
+            self.storage.refresh_briefing_cache(
+                self.space,
+                recent_limit=self.config.briefing_recent,
+                important_limit=self.config.briefing_important,
+            )
         except Exception as e:
             logger.debug("Briefing refresh error: %s", e)

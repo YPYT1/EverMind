@@ -25,7 +25,7 @@ EverMind is a two-component system: an MCP server that provides memory tools, an
               | Layer 3: semantic     | project facts
               | Layer 4: procedural   | workflows
               | Layer 5: archive      | permanent
-              | Layer 6: graph        | relationships (Phase 3)
+              | Layer 6: graph        | relationships (auto-extracted from content)
               |                       |
               | FTS5 keyword search   |
               | sqlite-vec KNN search |
@@ -102,4 +102,4 @@ Based on cognitive science memory taxonomy:
 | semantic | 1 | Long | Facts: tech stack, decisions |
 | procedural | 1 | Long | Workflows: deploy, build |
 | archive | 2 | Permanent | Architecture decisions |
-| graph | — | Permanent | Entity relationships |
+| graph | — | Permanent | Entity relationships (auto-extracted from content) |

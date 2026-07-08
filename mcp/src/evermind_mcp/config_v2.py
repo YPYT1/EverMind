@@ -21,20 +21,19 @@ class EverMindConfig:
     # Embedding (optional)
     embed_model: str = "BAAI/bge-small-zh-v1.5"
     embed_enabled: bool = True
+    embed_dim: int = 512  # auto-detected, not from env
 
-    # LLM extraction (optional, needs api key)
-    llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
-    llm_base_url: str = "https://api.openai.com/v1"
+    # Briefing
+    briefing_recent: int = 8          # env: EVERMIND_BRIEFING_RECENT
+    briefing_important: int = 5       # env: EVERMIND_BRIEFING_IMPORTANT
+
+    # Graph
+    graph_enabled: bool = True        # env: EVERMIND_GRAPH_ENABLED
 
     def db_path(self, space: str) -> Path:
         """Return the SQLite file path for a given project space."""
         slug = space.replace(":", "_").replace("/", "_")
         return self.home / f"{slug}.db"
-
-    @property
-    def has_llm(self) -> bool:
-        return bool(self.llm_api_key)
 
 
 def load_config(cwd: str | None = None) -> EverMindConfig:
@@ -50,7 +49,7 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         default_space=space,
         embed_model=_env("EVERMIND_EMBED_MODEL", "BAAI/bge-small-zh-v1.5"),
         embed_enabled=_env("EVERMIND_EMBED_ENABLED", "true").lower() != "false",
-        llm_api_key=_env("EVERMIND_LLM_API_KEY"),
-        llm_model=_env("EVERMIND_LLM_MODEL", "gpt-4o-mini"),
-        llm_base_url=_env("EVERMIND_LLM_BASE_URL", "https://api.openai.com/v1"),
+        briefing_recent=int(_env("EVERMIND_BRIEFING_RECENT", "8")),
+        briefing_important=int(_env("EVERMIND_BRIEFING_IMPORTANT", "5")),
+        graph_enabled=_env("EVERMIND_GRAPH_ENABLED", "true").lower() != "false",
     )

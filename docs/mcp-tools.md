@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-EverMind v2 provides 4 MCP tools. These are called by the AI agent automatically according to the session start protocol in the agent instruction files.
+EverMind v2 provides 6 MCP tools. These are called by the AI agent automatically according to the session start protocol in the agent instruction files.
 
 ## briefing
 
@@ -92,6 +92,41 @@ If identical content was already stored, returns `"action": "merged"` and does n
 **Returns**:
 ```json
 {"deleted": true, "id": "uuid"}
+```
+
+---
+
+## list
+
+**When to call**: When you need to browse memories by layer or tag rather than search by query.
+
+**Parameters**:
+- `layer` (string, optional) — filter by layer name: `working`, `episodic`, `semantic`, `procedural`, `archive`, `graph`
+- `tags` (array of strings, optional) — filter by one or more tags
+- `limit` (integer, default 20) — max results to return
+
+**Returns**:
+```json
+{
+  "results": [
+    {"id": "...", "content": "...", "layer": "semantic", "tags": ["auth"], "importance": 1}
+  ],
+  "count": 5
+}
+```
+
+---
+
+## graph_explore
+
+**When to call**: When you want to find memories related to a specific entity (e.g. a module, function, concept, or person).
+
+**Parameters**:
+- `entity` (string, required) — the entity name to look up in the knowledge graph
+
+**Returns**:
+```json
+{"entity": "AuthService", "related_memories": [{"id": "...", "content": "...", "layer": "semantic"}], "count": 3}
 ```
 
 ---

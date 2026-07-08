@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -149,12 +150,16 @@ class EmbeddedStorage:
                     updated_at    INTEGER NOT NULL
                 );
 
+                -- _meta
+                CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT);
+
                 -- Indexes
                 CREATE INDEX IF NOT EXISTS idx_memories_space      ON memories(space);
                 CREATE INDEX IF NOT EXISTS idx_memories_layer      ON memories(layer);
                 CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
                 CREATE INDEX IF NOT EXISTS idx_memories_expires    ON memories(expires_at) WHERE expires_at IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS idx_event_log_space     ON event_log(space);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_unique ON graph_nodes(space, node_type, label);
             """)
             c.commit()
 
@@ -262,20 +267,96 @@ class EmbeddedStorage:
         tokens = [t.strip('"') for t in text.split() if t.strip()]
         return " ".join(f'"{t}"' for t in tokens) if tokens else '""'
 
-    def search_fts(self, query: str, space: str, limit: int = 10) -> list[MemoryRow]:
+    # ------------------------------------------------------------------
+    # _meta helpers
+    # ------------------------------------------------------------------
+
+    def get_meta(self, key: str) -> "str | None":
+        row = self.conn.execute(
+            "SELECT value FROM _meta WHERE key=?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._write_lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            self.conn.commit()
+
+    def check_embed_dim(self, dim: int) -> bool:
+        stored_dim = self.get_meta("embed_dim")
+        if stored_dim is None:
+            self.set_meta("embed_dim", str(dim))
+            return True
+        if int(stored_dim) == dim:
+            return True
+        logger.warning(
+            "Embedding dimension mismatch: stored=%s, current=%s. Vector search disabled.",
+            stored_dim,
+            dim,
+        )
+        return False
+
+    # ------------------------------------------------------------------
+    # List memories
+    # ------------------------------------------------------------------
+
+    def list_memories(
+        self,
+        space: str,
+        layer: str = None,
+        tags: list = None,
+        limit: int = 20,
+    ) -> "list[MemoryRow]":
         now = self._now_ms()
+        params: list = [space]
+        sql = "SELECT * FROM memories WHERE space=?"
+        if layer is not None:
+            sql += " AND layer=?"
+            params.append(layer)
+        if tags is not None and len(tags) > 0:
+            tag_clauses = " OR ".join(
+                "tags LIKE ?" for _ in tags
+            )
+            sql += f" AND ({tag_clauses})"
+            for tag in tags:
+                params.append(f'%"{tag}"%')
+        sql += " AND (expires_at IS NULL OR expires_at > ?)"
+        params.append(now)
+        sql += " ORDER BY importance DESC, updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    def search_fts(self, query: str, space: str, limit: int = 10, layer: str = None, tags: list = None) -> list[MemoryRow]:
+        now = self._now_ms()
+        params: list = [self._fts_query(query), space]
+        extra = ""
+        if layer is not None:
+            extra += " AND m.layer=?"
+            params.append(layer)
+        if tags is not None and len(tags) > 0:
+            tag_clauses = " OR ".join("m.tags LIKE ?" for _ in tags)
+            extra += f" AND ({tag_clauses})"
+            for tag in tags:
+                params.append(f'%"{tag}"%')
+        params.append(now)
+        params.append(limit)
         rows = self.conn.execute(
-            """
+            f"""
             SELECT m.*, bm25(memories_fts) AS score
             FROM memories m
             JOIN memories_fts f ON m.rowid = f.rowid
             WHERE memories_fts MATCH ?
               AND m.space = ?
+              {extra}
               AND (m.expires_at IS NULL OR m.expires_at > ?)
             ORDER BY score
             LIMIT ?
             """,
-            (self._fts_query(query), space, now, limit),
+            params,
         ).fetchall()
         result = []
         for row in rows:
@@ -395,7 +476,7 @@ class EmbeddedStorage:
             updated_at=row["updated_at"],
         )
 
-    def refresh_briefing_cache(self, space: str) -> BriefingData:
+    def refresh_briefing_cache(self, space: str, recent_limit: int = 8, important_limit: int = 5) -> BriefingData:
         now = self._now_ms()
 
         recent_rows = self.conn.execute(
@@ -403,9 +484,9 @@ class EmbeddedStorage:
             SELECT * FROM memories
             WHERE space=? AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY created_at DESC
-            LIMIT 8
+            LIMIT ?
             """,
-            (space, now),
+            (space, now, recent_limit),
         ).fetchall()
 
         important_rows = self.conn.execute(
@@ -413,9 +494,9 @@ class EmbeddedStorage:
             SELECT * FROM memories
             WHERE space=? AND importance >= 1 AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY importance DESC, updated_at DESC
-            LIMIT 5
+            LIMIT ?
             """,
-            (space, now),
+            (space, now, important_limit),
         ).fetchall()
 
         count_row = self.conn.execute(
@@ -561,6 +642,125 @@ class EmbeddedStorage:
         query = content[:50]
         candidates = self.search_fts(query, space, limit=3)
         return [m for m in candidates if m.score > threshold]
+
+    # ------------------------------------------------------------------
+    # Graph layer
+    # ------------------------------------------------------------------
+
+    def upsert_graph_node(self, space: str, node_type: str, label: str, meta: dict = {}) -> str:
+        now = self._now_ms()
+        existing = self.conn.execute(
+            "SELECT id FROM graph_nodes WHERE space=? AND node_type=? AND label=?",
+            (space, node_type, label),
+        ).fetchone()
+        if existing:
+            return existing["id"]
+        node_id = str(uuid.uuid4())
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO graph_nodes (id, space, node_type, label, meta, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (node_id, space, node_type, label, json.dumps(meta), now),
+            )
+            self.conn.commit()
+        # Re-fetch in case INSERT OR IGNORE lost a race
+        row = self.conn.execute(
+            "SELECT id FROM graph_nodes WHERE space=? AND node_type=? AND label=?",
+            (space, node_type, label),
+        ).fetchone()
+        return row["id"] if row else node_id
+
+    def add_graph_edge(
+        self,
+        space: str,
+        src_id: str,
+        dst_id: str,
+        edge_type: str,
+        weight: float = 1.0,
+        meta: dict = {},
+    ) -> str:
+        now = self._now_ms()
+        edge_id = str(uuid.uuid4())
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO graph_edges (id, space, src_id, dst_id, edge_type, weight, meta, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (edge_id, space, src_id, dst_id, edge_type, weight, json.dumps(meta), now),
+            )
+            self.conn.commit()
+        return edge_id
+
+    def link_memory_to_entities(self, memory_id: str, space: str, entities: list) -> None:
+        for entity in entities:
+            node_id = self.upsert_graph_node(space, "entity", entity)
+            self.add_graph_edge(
+                space=space,
+                src_id=node_id,
+                dst_id=node_id,  # self-ref placeholder; real target stored in meta
+                edge_type="MENTIONED_IN",
+                meta={"memory_id": memory_id},
+            )
+
+    def search_graph(self, space: str, entity_label: str, limit: int = 10) -> list:
+        nodes = self.conn.execute(
+            "SELECT * FROM graph_nodes WHERE space=? AND label LIKE ?",
+            (space, f"%{entity_label}%"),
+        ).fetchall()
+        results = []
+        for node in nodes:
+            edges = self.conn.execute(
+                """
+                SELECT * FROM graph_edges
+                WHERE src_id=? AND edge_type='MENTIONED_IN'
+                LIMIT ?
+                """,
+                (node["id"], limit),
+            ).fetchall()
+            for edge in edges:
+                edge_meta = json.loads(edge["meta"])
+                memory_id = edge_meta.get("memory_id")
+                if not memory_id:
+                    continue
+                mem_row = self.conn.execute(
+                    "SELECT * FROM memories WHERE id=?", (memory_id,)
+                ).fetchone()
+                if mem_row:
+                    results.append({
+                        "entity": node["label"],
+                        "memory": self._row_to_memory(mem_row).to_dict(),
+                    })
+        return results[:limit]
+
+    def extract_entities_from_content(self, content: str) -> list:
+        found: list = []
+        # File paths
+        for m in re.finditer(
+            r"\b[\w/\\]+\.(py|ts|js|go|rs|java|cpp|h|json|yaml|toml|md)\b",
+            content,
+        ):
+            found.append(m.group(0))
+        # CamelCase identifiers
+        for m in re.finditer(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b", content):
+            found.append(m.group(0))
+        # module/class/function/def/import names
+        for m in re.finditer(
+            r"(?:module|class|function|def|import)\s+([\w_]+)", content
+        ):
+            found.append(m.group(1))
+        # Deduplicate, filter short, limit to 10
+        seen: set = set()
+        result: list = []
+        for entity in found:
+            if len(entity) >= 3 and entity not in seen:
+                seen.add(entity)
+                result.append(entity)
+            if len(result) >= 10:
+                break
+        return result
 
     # ------------------------------------------------------------------
     # Close
