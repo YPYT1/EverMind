@@ -108,6 +108,14 @@ class MemoryService:
         )
         self.embedder.set_callback(self._on_embedding_ready)
         self.space = config.default_space
+        # Single persistent briefing worker (replaces per-call thread spawning)
+        self._briefing_event = threading.Event()
+        self._briefing_worker = threading.Thread(
+            target=self._briefing_worker_loop,
+            daemon=True,
+            name="evermind-briefing",
+        )
+        self._briefing_worker.start()
 
     # ------------------------------------------------------------------
     # Public API
@@ -183,10 +191,7 @@ class MemoryService:
 
         # Trigger briefing refresh in background if important enough
         if importance >= 1:
-            threading.Thread(
-                target=self._refresh_briefing_bg,
-                daemon=True,
-            ).start()
+            self._signal_briefing_refresh()
 
         logger.debug("Memory stored id=%s layer=%s type=%s", memory.id, layer, memory_type)
         return {
@@ -282,10 +287,7 @@ class MemoryService:
         deleted = self.storage.delete_memory(memory_id)
         if deleted:
             self.storage.log_event(self.space, "forget", memory_id, {})
-            threading.Thread(
-                target=self._refresh_briefing_bg,
-                daemon=True,
-            ).start()
+            self._signal_briefing_refresh()
             return {"deleted": True, "id": memory_id}
         return {"deleted": False, "id": memory_id, "error": "not found"}
 
@@ -318,6 +320,18 @@ class MemoryService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _briefing_worker_loop(self) -> None:
+        """Single background thread that refreshes briefing cache on demand."""
+        while True:
+            triggered = self._briefing_event.wait(timeout=120)
+            self._briefing_event.clear()
+            if triggered:
+                self._refresh_briefing_bg()
+
+    def _signal_briefing_refresh(self) -> None:
+        """Signal the briefing worker to refresh (non-blocking)."""
+        self._briefing_event.set()
+
     def _on_embedding_ready(self, memory_id: str, vec: list[float]) -> None:
         """
         Callback invoked by EmbeddingManager when a background embedding
@@ -330,10 +344,7 @@ class MemoryService:
         else:
             logger.warning("No rowid found for memory_id=%s; embedding discarded", memory_id)
 
-        threading.Thread(
-            target=self._refresh_briefing_bg,
-            daemon=True,
-        ).start()
+        self._signal_briefing_refresh()
 
     def _refresh_briefing_bg(self) -> None:
         """Background thread target: refresh the briefing cache silently."""

@@ -1,12 +1,68 @@
-# EverMind Instructions for Devin
+# EverMind Memory — Devin
 
-Use EverMind to restore project context before making changes.
+EverMind provides local 6-layer persistent memory via an embedded SQLite database.
+No external service. No extra config. Memory survives across all sessions automatically.
 
-1. Start with `briefing` for the current project space.
-2. Use `recall` for architecture decisions, known pitfalls, runtime configuration, and testing.
-3. Use evermind-code-graph when repository structure or impact is unclear.
-4. Verify all memory-derived facts in the repository.
-5. After meaningful changes, create a EverMind Archive candidate with evidence.
-6. Commit official notes only after explicit user confirmation.
+---
 
+## Session Start Protocol
 
+Run this at the beginning of every task, before any code changes.
+
+### Step 1 — Load memory
+Call briefing().
+
+- Returns memories (memory_count > 0) → use as project context, proceed.
+- Returns empty (memory_count = 0) → new project, go to Step 2.
+
+### Step 2 — New project: explore the codebase
+
+When no memories exist, explore the repository first:
+
+1. Index the repo:
+   evermind-code-graph cli index_repository '{"repo_path":"<absolute path>"}'
+
+2. Get architecture overview:
+   evermind-code-graph cli get_architecture '{"project":"<project-name>"}'
+
+3. Find entry points and config:
+   evermind-code-graph cli search_graph '{"project":"<name>","query":"entry point config main"}'
+
+Save key findings as the project's first memories:
+
+   remember("Tech stack: <languages, frameworks, databases>", importance=1)
+   remember("Entry point: <file> — run with <command>", importance=1)
+   remember("Build command: <command>  Test command: <command>", importance=1)
+   remember("Key modules: <brief summary>", importance=1)
+
+---
+
+## During Work
+
+Before starting a feature or investigating a bug:
+   recall("topic or component name")
+
+After discovering something worth keeping:
+   remember("content", importance=1)
+
+For permanent architecture decisions or critical bugs:
+   remember("Decision: ...", importance=2)
+
+importance values:
+- 0 — working note, expires 24h (default)
+- 1 — long-term memory
+- 2 — permanent archive, never deleted
+
+---
+
+## Memory Layers
+
+| Layer | Retention | Use for |
+|-------|-----------|---------|
+| working | 24h auto-expire | Temporary notes, WIP |
+| episodic | Long-term | Events, bug fixes, discoveries |
+| semantic | Long-term | Facts about the project |
+| procedural | Long-term | Deploy steps, commands, workflows |
+| archive | Permanent | Architecture decisions, permanent rules |
+
+Safety: Never save API keys, tokens, passwords, or credentials.

@@ -212,23 +212,25 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 
 <div align="center">
 
-<table>
-<tr>
-<td align="center">
-<img src="./png/EverMind3群.png" width="160" /><br/>
-<sub>Community Group</sub>
-</td>
-<td align="center">
-<img src="./png/wecha.png" width="160" /><br/>
+<img src="./png/EverMind3群.png" width="200" /><br/>
+<sub>EverMind Community Group</sub>
+
+</div>
+
+<div align="center">
+
+<img src="./png/wecha.png" width="200" /><br/>
 <sub>WeChat</sub>
-</td>
-<td align="center">
-<img src="./png/Alipay.jpg" width="160" /><br/>
+
+</div>
+
+<div align="center">
+
+<img src="./png/Alipay.jpg" width="200" /><br/>
 <sub>Buy me a coffee ☕</sub>
-</td>
-</tr>
-</table>
 
+</div>
+
+<div align="center">
 Built for engineers who want their AI tools to actually remember things.
-
 </div>

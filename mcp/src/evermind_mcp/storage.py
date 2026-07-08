@@ -536,6 +536,25 @@ class EmbeddedStorage:
         ).fetchone()
         return self._row_to_memory(row) if row else None
 
+    def update_memory_content(self, memory_id: str, new_content: str) -> None:
+        """Update the content of an existing memory (used by fuzzy dedup merge)."""
+        now = self._now_ms()
+        with self._write_lock:
+            self.conn.execute(
+                "UPDATE memories SET content=?, updated_at=? WHERE id=?",
+                (new_content, now, memory_id),
+            )
+            self.conn.commit()
+        # Re-index in FTS5 — the content trigger handles INSERT/DELETE but not UPDATE
+        # so we manually update the FTS shadow table
+        with self._write_lock:
+            self.conn.execute(
+                "UPDATE memories_fts SET content=? WHERE rowid = "
+                "(SELECT rowid FROM memories WHERE id=?)",
+                (new_content, memory_id),
+            )
+            self.conn.commit()
+
     def find_similar_fts(
         self, content: str, space: str, threshold: float = 0.1
     ) -> list[MemoryRow]:

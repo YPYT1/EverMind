@@ -1,184 +1,237 @@
 <div align="center">
 
-# EverMind
+<img src="./png/everymind.png" alt="EverMind" width="420" />
 
-**AI 支援ソフトウェア開発のための、ローカルファーストなコンテキスト永続化システム。**
+**AIコーディングエージェントのためのローカルファースト6層メモリシステム。**  
+ゼロ設定。ゼロクラウド依存。Claude Code、Cursor、Codexで動作。
 
-[![EverMind](https://img.shields.io/badge/EverMind-Context%20Persistence-2E86AB?style=flat-square)](https://github.com/YPYT1/EverMind)
-[![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
-[![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
-[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](docs/quickstart-windows.md)
-[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](docs/quickstart-macos.md)
+[![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
+[![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
+[![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?style=flat-square)](#アーキテクチャ)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](scripts/setup-windows.ps1)
+[![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](scripts/setup-macos.sh)
 
-[Quick Start](#インストールと利用) · [Architecture](#システムアーキテクチャ) · [Concepts](#中核概念) · [Integration](#統合モデル) · [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
+[クイックスタート](#クイックスタート) · [アーキテクチャ](#アーキテクチャ) · [MCPツール](#mcpツール) · [セットアップ](#セットアップ) · [ドキュメント](docs/README.md) · [English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
 
 </div>
 
-## 定義
+---
 
-EverMind は、AI 支援ソフトウェア開発のためのローカルファーストな記憶インフラストラクチャです。
+## EverMindとは？
 
-プロジェクトのコンテキストをセッションを越えて保持し、高速な作業記憶とレビュー済みの長期知識を分離し、coding agent がプロジェクト知識を復元、検索、更新、検証するための安定した入口を提供します。
+EverMindは、AIコーディングエージェントにセッションを越えた永続的なメモリを提供します。MCPを介してClaude Code、Cursor、Codexに直接組み込まれ、クラウドも独立したサーバーもAPIキーも設定も不要で、リポジトリを指すだけで使えます。
 
-EverMind は Agent フレームワークでも、ベクトルデータベースでも、単体の RAG アプリケーションでもありません。AI 開発環境の下に置かれる、コンテキスト永続化レイヤーです。
+メモリは人間が知識を保存する方法をモデルに6層で構成されています：自動期限切れの作業メモ、エピソード的イベント、意味的事実、手続き的知識、永久アーカイブ決定、エンティティ関係グラフ。適切な層は内容と重要度に基づいて自動的に選択されます。
 
-## 背景
+## 課題
 
-AI coding agents は通常、短命なコンテキストウィンドウに依存しています。ファイルを読めても、ツールを呼び出せても、セッションをまたぐと重要な開発文脈が失われます。
+AIエージェントはセッション間ですべてを忘れます：
 
-- なぜそのモジュールがその設計になったのか。
-- どのコマンドで動作を検証できるのか。
-- runtime data、インデックス、生成物がどこにあるのか。
-- 以前失敗した実装上の注意点は何か。
-- どの事実が長期的なプロジェクト知識として安定しているのか。
-- どの情報は一時的で、長期ドキュメントに入れるべきではないのか。
+- モジュールが特定の方法で設計された理由
+- プロジェクトを実際にビルドまたはテストするコマンド
+- 既知のバグと機能した修正方法
+- デプロイ手順と落とし穴
+- 個人の好みとコーディング規約
 
-RAG やベクトル検索はテキスト検索には有効ですが、知識のライフサイクルまでは定義しません。Agent フレームワークは行動を調整できますが、信頼できるプロジェクト知識の永続化を主目的にはしません。EverMind はこの間のレイヤーを担います。
+EverMindは、エージェントがその知識を保存・取得できる信頼できる場所を提供することで、これを解決します。
 
-## 中核となる解決策
-
-EverMind は記憶を単なる保存処理ではなく、ライフサイクルとして扱います。
+## アーキテクチャ
 
 ```text
-working context -> searchable memory -> reviewed knowledge -> reusable project intelligence
+          Claude Code / Cursor / Codex
+                     |
+                  MCP (stdio)
+                     |
+           +-----------------------+
+           |   EverMind v2 コア    |
+           |                       |
+           |  remember / recall    |
+           |  forget  / briefing   |
+           +-----------+-----------+
+                       |
+           +-----------v-----------+
+           |   SQLite              |
+           | (プロジェクトごとに   |
+           |  1ファイル)           |
+           |                       |
+           |  レイヤー1: 作業      |  24時間自動期限切れ
+           |  レイヤー2: エピソード|  イベントと発見
+           |  レイヤー3: 意味      |  プロジェクト事実
+           |  レイヤー4: 手続き    |  ハウツー知識
+           |  レイヤー5: アーカイブ|  永久決定
+           |  レイヤー6: グラフ    |  エンティティ関係
+           |                       |
+           |  FTS5 キーワード検索  |
+           |  sqlite-vec KNN       |
+           |  イベントログ         |
+           +-----------------------+
 ```
 
-このモデルにより、AI 開発システムは次の性質を持てます。
+ストレージ：`~/.evermind/<project-slug>.db` — プロジェクトごとに1つのSQLiteファイル、名前はgit remoteから自動検出。
 
-- **継続性**：次のセッションを既知のプロジェクト文脈から開始できる。
-- **構造化**：記憶をプロジェクト、agent、アーカイブ、コードグラフの関心ごとに分けられる。
-- **信頼性**：長期知識はレビュー後に正式な Markdown ノートになる。
+## クイックスタート
 
-## システムアーキテクチャ
-
-```text
-AI Coding Interfaces
-  Codex / Claude Code / Cursor / Devin
-  agent instructions and skills
-  generated MCP configuration
-
-EverMind Orchestration Layer
-  setup and health checks
-  EverMind MCP bridge
-  memory routing
-  write policy
-  archive candidate flow
-  code graph access
-
-Local Knowledge Substrate
-  realtime project memory
-  reviewed Markdown archive
-  repository graph index
-  runtime configuration and local paths
-```
-
-EverMind は AI coding agents とローカル知識ストアの間に位置します。agent 側は置き換え可能で、オーケストレーション層がポリシーを持ち、ローカル知識基盤が永続化を担当します。
-
-## 中核概念
-
-### コンテキスト永続化
-
-プロジェクトの文脈はチャットセッションとともに消えるべきではありません。EverMind は、過去の判断、実行規約、既知の問題、検証方法を agent が復元できるようにします。
-
-### 記憶ライフサイクル
-
-1. `briefing` で作業開始時に文脈を復元する。
-2. `recall` で関連する過去の記憶を検索する。
-3. `remember` で有用な作業事実を保存する。
-4. `propose_basic_memory_update` でアーカイブ候補を作成する。
-5. `commit_basic_memory_update` は明示的な確認後にのみ正式知識へ昇格する。
-
-### レビュー済み知識
-
-長期的なプロジェクト知識は、安定し、根拠があり、読める形式であるべきです。EverMind Archive はレビュー後の知識を Markdown として保存します。
-
-### コードベース文脈
-
-ソフトウェアの記憶は文章だけではありません。構造、呼び出し経路、コード断片、変更影響も必要です。EverMind は Code Graph により記憶を実際のリポジトリ構造に接続します。
-
-## 中核機能
-
-| 機能 | 内容 |
-| --- | --- |
-| セッション復元 | cold start ではなく briefing から作業を始める。 |
-| 意味検索 | 事実、判断、既知の問題、設定を検索する。 |
-| 作業記憶 | 開発中の有用な文脈を保存する。 |
-| レビュー済みアーカイブ | 確認された知識だけを正式な Markdown にする。 |
-| コードグラフ理解 | 構造、呼び出し経路、検索、断片、影響分析を扱う。 |
-| 複数 agent 対応 | Codex、Claude Code、Cursor、Devin から同じ記憶層を使う。 |
-
-## 利用シーン
-
-- 数日後に機能開発を再開する。
-- モジュール変更前に過去の設計判断を確認する。
-- テストコマンド、runtime path、既知の問題をプロジェクト知識として残す。
-- 作業完了後に根拠付きの記憶候補を作る。
-- 共有関数の変更前に呼び出し経路と影響範囲を確認する。
-
-## インストールと利用
-
-<details>
-<summary><strong>Windows: guided setup</strong></summary>
-
-```powershell
-git clone https://github.com/YPYT1/EverMind.git
-cd EverMind
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\configure.ps1
-```
-
-</details>
-
-<details>
-<summary><strong>macOS: guided setup</strong></summary>
+### 1. クローン
 
 ```bash
 git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
-bash scripts/macos/configure.sh
 ```
 
-</details>
+### 2. セットアップスクリプトの実行
 
-セットアップ後、利用するクライアントの MCP 設定をコピーします。
+**Windows：**
 
-```text
-generated/mcp-config/codex.toml
-generated/mcp-config/claude-code.json
-generated/mcp-config/cursor.json
-generated/mcp-config/devin.json
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
-## 統合モデル
+**macOS / Linux：**
 
-```text
-Agent client
-  -> generated MCP snippet
-  -> uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-  -> EverMind MCP tools
-  -> local memory, archive, and code graph layers
+```bash
+bash scripts/setup-macos.sh
 ```
 
-## ロードマップ
+スクリプトはPython 3.11+をチェックし、uvがない場合はインストールし、依存関係を同期し、Claude DesktopとCursorを自動設定します。
 
-- 管理された環境向けの非対話セットアップを改善する。
-- 大規模リポジトリ向けのアーカイブテンプレートを拡張する。
-- MCP 起動失敗の診断を強化する。
-- local-first を既定の運用モデルとして維持する。
-- cloud memory は必須ではなく、将来の任意同期として扱う。
+### 3. 手動設定（オプション）
 
-## Community and Support
+`claude_desktop_config.json`に追加：
 
-Issues and pull requests are welcome. If EverMind helps your local AI memory workflow, a star or small contribution helps the project move forward.
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
+```
+
+`/path/to/EverMind`を実際のクローンパスに置き換えてください。これが唯一必要な変更です。
+
+### 4. ベクトル検索を有効化（オプション、推奨）
+
+```bash
+cd mcp
+uv pip install sqlite-vec sentence-transformers
+```
+
+これらがなくても、EverMindはFTS5キーワード検索を使用します。インストールすると、`recall()`はハイブリッドBM25 + ベクトルKNNを実行し、「認証モジュールについて何を決定したか」のような意味的クエリに大幅に優れています。
+
+## MCPツール
+
+| ツール | 目的 |
+|--------|------|
+| `remember(content, importance, tags)` | メモリに保存。importance: 0 = 作業(24h), 1 = 長期, 2 = 永久 |
+| `recall(query, limit, mode)` | ハイブリッドBM25 + 意味検索。gitからプロジェクトを自動検出 |
+| `forget(id)` | IDでメモリを削除 |
+| `briefing()` | セッションコンテキストをロード：このプロジェクトの最近の重要なメモリ |
+
+メモリタイプはコンテンツから自動検出：バグ修正→エピソード、アーキテクチャ決定→意味、デプロイ手順→手続き。削除されたくないものには`importance=2`を設定します。
+
+## セットアップ
+
+### Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
+```
+
+スクリプトの機能：
+- Python 3.11+、uv、gitをチェック
+- uvが見つからない場合はインストールを提供
+- mcpディレクトリで`uv sync`を実行
+- Claude DesktopとCursorのMCP設定を自動更新
+- `~/.evermind`メモリディレクトリを作成
+
+### macOS
+
+```bash
+bash scripts/setup-macos.sh
+```
+
+Windowsと同じ手順、macOS設定パス（`~/Library/Application Support/Claude/`）を使用。
+
+### 手動インストール
+
+```bash
+# 依存関係をインストール
+uv sync --directory mcp
+
+# オプション：ベクトル検索（推奨）
+cd mcp && uv pip install sqlite-vec sentence-transformers
+```
+
+## メモリライフサイクル
+
+| レイヤー | 保持期間 | 用途 |
+|----------|----------|------|
+| 作業 | 24時間 | 一時的なメモ、WIPコンテキスト |
+| エピソード | 長期 | イベント、バグ修正、発見 |
+| 意味 | 長期 | プロジェクトに関する事実 |
+| 手続き | 長期 | デプロイ手順、ワークフロー、ハウツー |
+| アーカイブ | 永久 | アーキテクチャ決定、永久ルール |
+| グラフ | 永久 | エンティティ関係（フェーズ3） |
+
+- `importance=0` — 作業レイヤー（デフォルト、24時間で期限切れ）
+- `importance=1` — 長期レイヤー（コンテンツタイプで自動分類）
+- `importance=2` — アーカイブレイヤー（削除されない）
+
+## エージェント指示
+
+`CLAUDE.md`または`AGENTS.md`に追加：
+
+```markdown
+## EverMind Memory
+
+Call briefing() at session start to restore project context.
+Call remember(content) for anything worth keeping across sessions.
+Call recall(query) before starting work on a feature or bug.
+
+importance=0: temporary working note (default)
+importance=1: long-term memory
+importance=2: permanent archive (architecture decisions, critical bugs)
+```
+
+## ドキュメント
+
+- [アーキテクチャ](docs/architecture.md)
+- [MCPツールリファレンス](docs/mcp-tools.md)
+- [設定](docs/configuration.md)
+- [Windowsクイックスタート](docs/quickstart-windows.md)
+- [macOSクイックスタート](docs/quickstart-macos.md)
+- [トラブルシューティング](docs/troubleshooting.md)
+- [v2リデザインノート](docs/v2-redesign.md)
+
+---
+
+## コミュニティとサポート
 
 <div align="center">
-  <p><strong>EverMind community group</strong></p>
-  <img src="png/EverMind3群.png" alt="EverMind community group QR code" width="260">
+
+<img src="./png/EverMind3群.png" width="200" /><br/>
+<sub>EverMindコミュニティグループ</sub>
+
 </div>
 
 <div align="center">
-  <p><strong>Support the project</strong></p>
-  <img src="png/Alipay.jpg" alt="Alipay support QR code" width="220">
-  <img src="png/wecha.png" alt="WeChat support QR code" width="220">
+
+<img src="./png/wecha.png" width="200" /><br/>
+<sub>WeChat</sub>
+
+</div>
+
+<div align="center">
+
+<img src="./png/Alipay.jpg" width="200" /><br/>
+<sub>コーヒーをおごる ☕</sub>
+
+</div>
+
+<div align="center">
+AIツールに実際に物事を覚えてほしいエンジニアのために構築されました。
 </div>

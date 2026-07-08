@@ -212,24 +212,22 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 
 <div align="center">
 
-<table>
-<tr>
-<td align="center">
-<img src="./png/EverMind3群.png" width="160" /><br/>
+<img src="./png/EverMind3群.png" width="200" /><br/>
 <sub>EverMind 社群</sub>
-</td>
-<td align="center">
-<img src="./png/wecha.png" width="160" /><br/>
-<sub>微信</sub>
-</td>
-<td align="center">
-<img src="./png/Alipay.jpg" width="160" /><br/>
-<sub>支持作者 ☕</sub>
-</td>
-</tr>
-</table>
 
-为希望 AI 工具真正记住事情的工程师而构建。
+</div>
+
+<div align="center">
+
+<img src="./png/wecha.png" width="200" /><br/>
+<sub>微信</sub>
+
+</div>
+
+<div align="center">
+
+<img src="./png/Alipay.jpg" width="200" /><br/>
+<sub>支持作者 ☕</sub>
 
 </div>
 
