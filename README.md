@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="./png/everymind.png" alt="EverMind" width="180" />
-
-# EverMind
+<img src="./png/everymind.png" alt="EverMind" width="420" />
 
 **Local-first 6-layer AI memory system for coding agents.**  
 Zero config. Zero cloud. Runs inside Claude Code, Cursor, and Codex.
@@ -210,6 +208,27 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 
 ---
 
+## Community & Support
+
 <div align="center">
+
+<table>
+<tr>
+<td align="center">
+<img src="./png/EverMind3群.png" width="160" /><br/>
+<sub>Community Group</sub>
+</td>
+<td align="center">
+<img src="./png/wecha.png" width="160" /><br/>
+<sub>WeChat</sub>
+</td>
+<td align="center">
+<img src="./png/Alipay.jpg" width="160" /><br/>
+<sub>Buy me a coffee ☕</sub>
+</td>
+</tr>
+</table>
+
 Built for engineers who want their AI tools to actually remember things.
+
 </div>

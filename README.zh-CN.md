@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="./png/everymind.png" alt="EverMind" width="180" />
-
-# EverMind
+<img src="./png/everymind.png" alt="EverMind" width="420" />
 
 **本地优先的六层 AI 记忆系统，专为编程助手设计。**  
 零配置。零云依赖。直接接入 Claude Code、Cursor、Codex。
@@ -209,6 +207,31 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 - [v2 重设计方案](docs/v2-redesign.md)
 
 ---
+
+## 社区与支持
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center">
+<img src="./png/EverMind3群.png" width="160" /><br/>
+<sub>EverMind 社群</sub>
+</td>
+<td align="center">
+<img src="./png/wecha.png" width="160" /><br/>
+<sub>微信</sub>
+</td>
+<td align="center">
+<img src="./png/Alipay.jpg" width="160" /><br/>
+<sub>支持作者 ☕</sub>
+</td>
+</tr>
+</table>
+
+为希望 AI 工具真正记住事情的工程师而构建。
+
+</div>
 
 <div align="center">
 为希望 AI 工具真正记住事情的工程师而构建。
