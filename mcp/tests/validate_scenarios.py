@@ -259,13 +259,27 @@ def test_mcp_tools():
     import importlib
     server_mod = importlib.import_module("evermind_mcp.server_v2")
     tool_names = {t.name for t in server_mod.TOOLS}
-    required = {"remember", "recall", "forget", "briefing"}
+    required = {
+        "remember",
+        "recall",
+        "forget",
+        "briefing",
+        "list",
+        "graph_explore",
+        "status",
+        "export",
+        "compact",
+        "tags",
+        "reindex",
+        "health",
+        "list_spaces",
+    }
     missing = required - tool_names
     assert not missing, f"Missing MCP tools: {missing}"
     for tool in server_mod.TOOLS:
         assert tool.description, f"Tool {tool.name} missing description"
         assert tool.inputSchema,  f"Tool {tool.name} missing inputSchema"
-    ok("Scenario 11 — MCP tools: all 4 tools registered with description and schema")
+    ok("Scenario 11 — MCP tools: all 13 tools registered with description and schema")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

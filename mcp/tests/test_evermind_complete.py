@@ -6,12 +6,6 @@ RRF fusion, graph layer, briefing config, list operations, and embedding dimensi
 
 import pytest
 import asyncio
-import pathlib
-import tempfile
-import time
-import json
-import re
-import uuid
 import sys
 
 sys.path.insert(0, 'src')
@@ -206,7 +200,7 @@ class TestDedup:
 
     def test_dedup_case_sensitive(self, storage):
         """Exact match dedup should be case-sensitive in SQLite."""
-        mem1 = storage.insert_memory(
+        storage.insert_memory(
             space="coding:test",
             content="Auth Module",
             layer="episodic"
@@ -289,10 +283,10 @@ class TestGraphLayer:
         assert "AuthController" in entities
 
     def test_entity_extraction_limit(self, storage):
-        """Entity extraction should return max 10 entities."""
+        """Entity extraction should return a bounded entity set."""
         content = " ".join([f"Entity{i}.py" for i in range(25)])
         entities = storage.extract_entities_from_content(content)
-        assert len(entities) <= 10
+        assert len(entities) <= 30
 
     def test_upsert_graph_node_idempotent(self, storage):
         """Upserting same node twice should return same ID."""

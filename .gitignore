@@ -11,3 +11,4 @@ logs/
 tmp/
 generated/
 tools/
+config/evermind.yaml

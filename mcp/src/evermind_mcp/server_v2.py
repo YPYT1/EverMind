@@ -1,13 +1,17 @@
 """
-EverMind MCP Server v2 — 11-tool interface.
+EverMind MCP Server v2 — 13-tool interface.
 
-Tools: remember, recall, forget, briefing, list, graph_explore, status, export, compact, tags
+Tools: remember, recall, forget, briefing, list, graph_explore, status,
+export, compact, tags, reindex, health, list_spaces
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
@@ -15,12 +19,14 @@ from mcp import types
 import mcp.server.stdio
 
 from .memory_service_v2 import MemoryService
+from .project_detector import detect_project_space
 
 logger = logging.getLogger(__name__)
 
 server = Server("evermind-mcp")
 
 _svc: MemoryService | None = None
+_last_roots_space: str | None = None
 
 # ---------------------------------------------------------------------------
 # Tool definitions
@@ -242,6 +248,31 @@ TOOLS: list[types.Tool] = [
         description="List all tags currently in use in this project. Use to discover available tag categories before filtering with recall(tags=[...]) or list(tags=[...]).",
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
+    types.Tool(
+        name="reindex",
+        description="Rebuild the FTS index using the current tokenizer. Use after installing jieba or when Chinese keyword search misses old memories.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "all_spaces": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, rebuild FTS indexes for all spaces in the current database.",
+                },
+            },
+            "required": [],
+        },
+    ),
+    types.Tool(
+        name="health",
+        description="Show memory health metrics: embedding coverage, FTS coverage, queue state, duplicates, expired working memories, and model availability.",
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    types.Tool(
+        name="list_spaces",
+        description="List all project spaces known to this local EverMind database and show the current space.",
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -261,6 +292,8 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
     try:
         if _svc is None:
             raise RuntimeError("MemoryService not initialised")
+
+        await _maybe_update_space_from_roots()
 
         if name == "remember":
             result = await _svc.remember(
@@ -284,7 +317,7 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
             )
 
         elif name == "forget":
-            result = await _svc.forget(id=args["id"])
+            result = await _svc.forget(memory_id=args["id"])
 
         elif name == "briefing":
             result = await _svc.briefing()
@@ -313,6 +346,15 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
 
         elif name == "tags":
             result = await _svc.list_tags()
+
+        elif name == "reindex":
+            result = await _svc.reindex(all_spaces=bool(args.get("all_spaces", False)))
+
+        elif name == "health":
+            result = await _svc.health()
+
+        elif name == "list_spaces":
+            result = await _svc.list_spaces()
 
         else:
             result = {"error": f"Unknown tool: {name}", "tool": name}
@@ -360,3 +402,46 @@ def main_sync() -> None:
     import asyncio
 
     asyncio.run(main())
+
+
+async def _maybe_update_space_from_roots() -> None:
+    """Use MCP client roots for project-space detection when available."""
+    global _last_roots_space
+    if _svc is None:
+        return
+    if os.environ.get("EVERMIND_DEFAULT_SPACE"):
+        return
+    try:
+        session = server.request_context.session
+        client_params = session.client_params
+        if (
+            client_params is None
+            or client_params.capabilities is None
+            or client_params.capabilities.roots is None
+        ):
+            return
+        roots_result = await session.list_roots()
+    except Exception:
+        return
+    roots = getattr(roots_result, "roots", None) or []
+    if not roots:
+        return
+    root_path = _root_uri_to_path(str(roots[0].uri))
+    if not root_path:
+        return
+    space = detect_project_space(str(root_path))
+    if space and space != _last_roots_space:
+        _svc.set_space(space)
+        _last_roots_space = space
+
+
+def _root_uri_to_path(uri: str) -> Path | None:
+    parsed = urlparse(uri)
+    if parsed.scheme and parsed.scheme != "file":
+        return None
+    if parsed.scheme == "file":
+        path = unquote(parsed.path)
+        if os.name == "nt" and path.startswith("/") and len(path) > 2 and path[2] == ":":
+            path = path[1:]
+        return Path(path)
+    return Path(uri)

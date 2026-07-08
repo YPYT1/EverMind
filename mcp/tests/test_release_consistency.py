@@ -16,22 +16,22 @@ def test_release_consistency_checks_pass_for_repo_state():
 
 def test_project_versions_match_repo_files():
     repo_root = Path(__file__).resolve().parents[1]
-    assert read_project_version(repo_root / "pyproject.toml") == "0.5.6"
+    assert read_project_version(repo_root / "pyproject.toml") == "2.0.0"
     assert (
         read_init_version(repo_root / "src" / "evermind_mcp" / "__init__.py")
-        == "0.5.6"
+        == "2.0.0"
     )
 
 
-def test_server_tool_count_is_nine():
+def test_server_tool_count_is_thirteen():
     repo_root = Path(__file__).resolve().parents[1]
-    assert read_tool_count(repo_root / "src" / "evermind_mcp" / "server.py") == 9
+    assert read_tool_count(repo_root / "src" / "evermind_mcp" / "server_v2.py") == 13
 
 
 def test_changelog_tracks_current_release_highlights():
     repo_root = Path(__file__).resolve().parents[1]
     changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [0.5.6]" in changelog
-    assert "Rebranded the bundled MCP bridge" in changelog
-    assert "EVERMIND_MCP_*" in changelog
+    assert "## [2.0.0]" in changelog
+    assert "13-tool EverMind MCP v2 interface" in changelog
+    assert "Qwen/Qwen3-Embedding-8B" in changelog
 

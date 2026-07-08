@@ -2,7 +2,7 @@
 #
 # This file documents all available settings.
 # In practice, you rarely need to set anything — defaults work out of the box.
-# Configure via environment variables or the MCP server env block.
+# Configure via the local .env file.
 
 storage:
   # Directory for SQLite databases (one per project, auto-named from git remote)
@@ -12,23 +12,26 @@ storage:
   # default_space: coding:my-project  # env: EVERMIND_DEFAULT_SPACE
 
 embedding:
-  # Local model (downloaded on first use, stored in HuggingFace cache)
-  model: BAAI/bge-small-zh-v1.5   # env: EVERMIND_EMBED_MODEL
-  enabled: true                     # env: EVERMIND_EMBED_ENABLED
+  provider: siliconflow              # env: EVERMIND_EMBED_PROVIDER
+  model: Qwen/Qwen3-Embedding-8B      # env: EVERMIND_EMBED_MODEL
+  dim: 512                            # env: EVERMIND_EMBED_DIM
+  enabled: true                       # env: EVERMIND_EMBED_ENABLED
+  warmup_on_start: true               # env: EVERMIND_EMBED_WARMUP_ON_START
 
-  # To use English-optimized model:
-  # model: all-MiniLM-L6-v2
-
-  # To use OpenAI embeddings instead of local model:
-  # api_key: sk-...                 # env: EVERMIND_EMBED_API_KEY
-  # model: text-embedding-3-small
+reranker:
+  enabled: true                       # env: EVERMIND_RERANK_ENABLED
+  model: Qwen/Qwen3-Reranker-8B       # env: EVERMIND_RERANK_MODEL
+  candidates: 30                      # env: EVERMIND_RERANK_CANDIDATES
 
 llm_extraction:
-  # Optional: uses an LLM to extract structured facts from stored memories
-  # Without this key, memories are stored as raw text (still useful)
-  # api_key: sk-...                 # env: EVERMIND_LLM_API_KEY
-  # model: gpt-4o-mini              # env: EVERMIND_LLM_MODEL
-  # base_url: https://api.openai.com/v1  # env: EVERMIND_LLM_BASE_URL
+  enabled: true                       # env: EVERMIND_LLM_ENABLED
+  model: deepseek-ai/DeepSeek-V4-Flash # env: EVERMIND_LLM_MODEL
+  briefing_summary: false             # env: EVERMIND_LLM_BRIEFING_SUMMARY
+
+siliconflow:
+  # Keep real keys only in local .env.
+  api_key: sk-...                     # env: EVERMIND_SILICONFLOW_API_KEY
+  base_url: https://api.siliconflow.cn/v1 # env: EVERMIND_SILICONFLOW_BASE_URL
 
 # ── MCP Server ──────────────────────────────────────────────────────────────
 # The MCP server is started by the AI client (Claude Desktop / Cursor / Codex).

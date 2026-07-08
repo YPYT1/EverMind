@@ -12,29 +12,38 @@ The parent EverMind setup renders ready-to-copy client snippets into `generated/
 
 ## Tools
 
-EverMind MCP exposes 9 tools:
+EverMind MCP exposes 13 tools:
 
-- `list_spaces`
 - `remember`
-- `request_status`
 - `recall`
-- `briefing`
 - `forget`
-- `fetch_history`
-- `propose_basic_memory_update`
-- `commit_basic_memory_update`
+- `briefing`
+- `list`
+- `graph_explore`
+- `status`
+- `export`
+- `compact`
+- `tags`
+- `reindex`
+- `health`
+- `list_spaces`
 
 ## Configuration
 
-Use the EverMind public environment variable names:
+Use a local `.env` file for runtime configuration. Keep MCP client config
+focused on starting the server process.
 
 ```text
-EVERMIND_MCP_BACKEND=everos
-EVERMIND_MCP_DEFAULT_SPACE=
-EVERMIND_MCP_USER_ID=mcp-user
-EVEROS_BASE_URL=http://127.0.0.1:3378
-EVERMIND_ARCHIVE_ROOT=<archive-root>
-EVERMIND_ARCHIVE_WRITE_POLICY=candidate
+EVERMIND_DEFAULT_SPACE=coding:my-project
+EVERMIND_SILICONFLOW_API_KEY=sk-...
+EVERMIND_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+EVERMIND_EMBED_PROVIDER=siliconflow
+EVERMIND_EMBED_MODEL=Qwen/Qwen3-Embedding-8B
+EVERMIND_EMBED_DIM=512
+EVERMIND_RERANK_ENABLED=true
+EVERMIND_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
+EVERMIND_LLM_ENABLED=true
+EVERMIND_LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash
 ```
 
 Use the generated parent-project snippets for normal client setup.

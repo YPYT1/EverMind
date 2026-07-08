@@ -8,11 +8,14 @@ that delegates storage, embedding, and type concerns to dedicated modules.
 import logging
 import threading
 import time
-from typing import Optional
+from collections import deque
 
 from .storage import EmbeddedStorage
 from .embedding import EmbeddingManager
+from .reranker import RerankerManager
+from .llm import LLMManager
 from .config_v2 import EverMindConfig
+from .content_guard import scan_sensitive_content
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +52,7 @@ def _detect_memory_type(content: str, importance: int) -> str:
     if any(k in lower for k in ("bug", "error", "fix", "crash", "exception")):
         return TYPE_BUG
 
-    if any(k in lower for k in ("how to", "步骤", "流程", "procedure", "deploy", "run")):
+    if any(k in lower for k in ("how to", "步骤", "流程", "procedure", "deploy", "run", "如何", "方法", "命令", "运行", "执行")):
         return TYPE_PROCEDURAL
 
     if any(k in lower for k in ("decided", "decision", "chose", "选择", "决定")):
@@ -105,9 +108,33 @@ class MemoryService:
         self.embedder = EmbeddingManager(
             model_name=config.embed_model,
             enabled=config.embed_enabled,
+            provider=config.embed_provider,
+            api_key=config.siliconflow_api_key,
+            api_base_url=config.siliconflow_base_url,
+            dimensions=config.embed_dim,
+            timeout_seconds=config.api_timeout_seconds,
+            queue_max_retries=config.embed_queue_max_retries,
         )
         self.embedder.set_callback(self._on_embedding_ready)
+        self.reranker = RerankerManager(
+            model_name=config.rerank_model,
+            enabled=config.rerank_enabled,
+            api_key=config.siliconflow_api_key,
+            api_base_url=config.siliconflow_base_url,
+            timeout_seconds=config.api_timeout_seconds,
+            instruction=config.rerank_instruction,
+        )
+        self.llm = LLMManager(
+            model_name=config.llm_model,
+            enabled=config.llm_enabled,
+            api_key=config.siliconflow_api_key,
+            api_base_url=config.siliconflow_base_url,
+            timeout_seconds=config.api_timeout_seconds,
+        )
         self.space = config.default_space
+        self._last_recall_latency_ms: float | None = None
+        self._recall_latencies: deque[float] = deque(maxlen=200)
+        self._last_recall_trace: dict = {}
 
         # CHANGE 6: Check embedding dimension matches storage expectation
         if self.embedder.available:
@@ -115,6 +142,17 @@ class MemoryService:
             if not self.storage.check_embed_dim(actual_dim):
                 logger.warning("Vector search disabled due to embedding dimension mismatch.")
                 self.embedder._enabled = False
+
+        if config.auto_reindex_on_start:
+            try:
+                self.storage.reindex_fts(self.space)
+            except Exception as exc:
+                logger.debug("Auto reindex failed: %s", exc)
+
+        if config.embed_warmup_on_start and self.embedder.available:
+            self.embedder.warmup()
+        if self.reranker.available:
+            self.reranker.warmup()
 
         # Single persistent briefing worker (replaces per-call thread spawning)
         self._briefing_event = threading.Event()
@@ -124,6 +162,19 @@ class MemoryService:
             name="evermind-briefing",
         )
         self._briefing_worker.start()
+
+    def set_space(self, space: str) -> None:
+        """Switch the active project space and backing SQLite database."""
+        if not space or space == self.space:
+            return
+        self.storage.close_all()
+        self.storage = EmbeddedStorage(self.config.db_path(space))
+        self.space = space
+        if self.embedder.available:
+            actual_dim = self.embedder.dim
+            if not self.storage.check_embed_dim(actual_dim):
+                logger.warning("Vector search disabled due to embedding dimension mismatch.")
+                self.embedder._enabled = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -142,6 +193,31 @@ class MemoryService:
         and near-duplicate merging.
         """
         space = self.space
+
+        if self.config.sensitive_memory_block:
+            sensitive_matches = scan_sensitive_content(content)
+            if sensitive_matches:
+                self.storage.log_event(
+                    space,
+                    "remember_rejected",
+                    None,
+                    {
+                        "reason": "sensitive_content",
+                        "categories": sorted({m.category for m in sensitive_matches}),
+                    },
+                )
+                return {
+                    "action": "rejected",
+                    "error": "sensitive_content",
+                    "sensitive_matches": [
+                        {
+                            "category": m.category,
+                            "matched_text": m.matched_text,
+                            "description": m.description,
+                        }
+                        for m in sensitive_matches
+                    ],
+                }
 
         # Auto-detect type if not explicitly set
         if memory_type == "auto":
@@ -172,6 +248,14 @@ class MemoryService:
                         sim = self.embedder.cosine_similarity(new_vec, cand_vec)
                         if sim >= self.config.cosine_dedup_threshold:
                             self.storage.update_memory_content(candidate.id, content)
+                            if self.config.graph_enabled:
+                                entities = self.storage.extract_entities_from_content(content)
+                                if entities:
+                                    self.storage.link_memory_to_entities(
+                                        candidate.id,
+                                        space,
+                                        entities,
+                                    )
                             self.storage.log_event(space, "remember_merged", candidate.id, {"reason": "cosine_similarity", "score": round(sim, 4)})
                             return {"id": candidate.id, "action": "merged", "layer": candidate.layer, "type": candidate.memory_type, "similar_merged": True, "similarity": round(sim, 4)}
 
@@ -224,23 +308,52 @@ class MemoryService:
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
-        or hybrid RRF fusion.
+        hybrid RRF fusion, and optional cross-encoder reranking.
         """
+        started = time.perf_counter()
         if space is None:
             space = self.space
+
+        candidate_limit = max(
+            limit * 2,
+            self.config.rerank_candidates if self.reranker.available else limit * 2,
+        )
 
         # All-spaces search: search across all known spaces using multi-space FTS
         if all_spaces:
             known_spaces = self.storage.list_spaces()
-            fts_results = self.storage.search_fts_multi(query, known_spaces, limit=limit * 2)
+            fts_results = self.storage.search_fts_multi(query, known_spaces, limit=candidate_limit)
             mode_used = "fts"
-            final_list = fts_results[:limit]
+            final_list, rerank_applied, rerank_fallback = self._rerank_if_available(
+                query,
+                fts_results,
+                limit,
+            )
+            if rerank_applied:
+                mode_used = "fts+rerank"
+            latency_ms = round((time.perf_counter() - started) * 1000, 3)
+            self._record_recall_trace(
+                space,
+                query,
+                mode,
+                mode_used,
+                len(fts_results),
+                0,
+                len(final_list),
+                rerank_applied,
+                rerank_fallback,
+                latency_ms,
+                all_spaces=True,
+            )
             return {
                 "results": [m.to_dict() for m in final_list],
                 "mode": mode_used,
                 "count": len(final_list),
                 "query": query,
                 "all_spaces": True,
+                "latency_ms": latency_ms,
+                "rerank_applied": rerank_applied,
+                "rerank_fallback_reason": rerank_fallback,
             }
 
         # Quick working-memory expiry
@@ -254,15 +367,18 @@ class MemoryService:
 
         # Full-text search
         if mode in ("hybrid", "fts"):
-            fts_results = self.storage.search_fts(query, space, limit=limit * 2, layer=layer, tags=tags)
+            fts_results = self.storage.search_fts(query, space, limit=candidate_limit, layer=layer, tags=tags)
 
         # Semantic / vector search
         if mode in ("hybrid", "semantic"):
             vec = self.embedder.encode(query)
             if vec is not None:
-                vec_results = self.storage.search_vec(vec, space, limit=limit * 2)
+                vec_results = self.storage.search_vec(vec, space, limit=candidate_limit)
                 if layer:
                     vec_results = [r for r in vec_results if r.layer == layer]
+                if tags:
+                    wanted = set(tags)
+                    vec_results = [r for r in vec_results if wanted.intersection(set(r.tags))]
 
         # Fuse results
         if fts_results and vec_results:
@@ -282,33 +398,78 @@ class MemoryService:
                 rf = fts_rank.get(mid, 9999)
                 rv = vec_rank.get(mid, 9999)
                 score = _rrf_score(rf, rv)
+                id_to_memory[mid].score = score
                 scored.append((score, mid))
 
             scored.sort(key=lambda x: x[0], reverse=True)
-            final_list = [id_to_memory[mid] for _, mid in scored[:limit]]
+            final_list = [id_to_memory[mid] for _, mid in scored[:candidate_limit]]
             mode_used = "hybrid"
 
         elif fts_results:
-            final_list = fts_results[:limit]
+            final_list = fts_results[:candidate_limit]
             mode_used = "fts"
 
         elif vec_results:
-            final_list = vec_results[:limit]
+            final_list = vec_results[:candidate_limit]
             mode_used = "semantic"
 
         else:
+            latency_ms = round((time.perf_counter() - started) * 1000, 3)
+            self._record_recall_trace(
+                space,
+                query,
+                mode,
+                mode,
+                len(fts_results),
+                len(vec_results),
+                0,
+                False,
+                "no_candidates",
+                latency_ms,
+            )
             return {
                 "results": [],
                 "mode": mode,
                 "count": 0,
                 "query": query,
+                "latency_ms": latency_ms,
+                "rerank_applied": False,
+                "rerank_fallback_reason": "no_candidates",
             }
 
+        final_list, rerank_applied, rerank_fallback = self._rerank_if_available(
+            query,
+            final_list,
+            limit,
+        )
+        if not rerank_applied:
+            final_list = final_list[:limit]
+        else:
+            mode_used = f"{mode_used}+rerank"
+
+        latency_ms = round((time.perf_counter() - started) * 1000, 3)
+        self._record_recall_trace(
+            space,
+            query,
+            mode,
+            mode_used,
+            len(fts_results),
+            len(vec_results),
+            len(final_list),
+            rerank_applied,
+            rerank_fallback,
+            latency_ms,
+        )
         return {
             "results": [m.to_dict() for m in final_list],
             "mode": mode_used,
             "count": len(final_list),
             "query": query,
+            "latency_ms": latency_ms,
+            "rerank_applied": rerank_applied,
+            "rerank_fallback_reason": rerank_fallback,
+            "fts_candidates": len(fts_results),
+            "vec_candidates": len(vec_results),
         }
 
     async def list_memories(
@@ -353,7 +514,21 @@ class MemoryService:
                 important_limit=self.config.briefing_important,
             )
 
-        return cache.to_dict()
+        data = cache.to_dict()
+        memories_for_summary = data.get("important", []) + data.get("recent", [])
+        if self.config.llm_briefing_summary:
+            summary = self.llm.summarize_briefing(memories_for_summary)
+            if summary:
+                data["context_summary"] = summary
+        data["warnings"] = [
+            m for m in memories_for_summary
+            if (m.get("memory_type") or m.get("type")) == TYPE_BUG
+        ][:5]
+        data["decisions"] = [
+            m for m in memories_for_summary
+            if m.get("layer") == LAYER_ARCHIVE or (m.get("memory_type") or m.get("type")) == TYPE_DECISION
+        ][:5]
+        return data
 
     async def graph_explore(self, entity: str) -> dict:
         """Explore graph relationships for a given entity."""
@@ -368,6 +543,12 @@ class MemoryService:
     async def status(self) -> dict:
         """Return service health and storage statistics."""
         stats = self.storage.get_stats(self.space)
+        graph_stats = self.storage.get_graph_stats(self.space)
+        total = stats.get("total_count", 0) or 0
+        embeddings = self.storage.count_embeddings(self.space)
+        fts_entries = self.storage.count_fts_entries(self.space)
+        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
+        fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
         try:
             import jieba  # noqa: F401
             jieba_available = True
@@ -376,13 +557,39 @@ class MemoryService:
         return {
             "space": self.space,
             "embedding_available": self.embedder.available,
+            "embedding_provider": self.embedder.provider,
             "embed_model": self.config.embed_model,
+            "embed_dim": self.embedder.dim,
+            "embedding_queue_pending": self.embedder.queue_size,
+            "embedding_processed_count": self.embedder.processed_count,
+            "embedding_failed_count": self.embedder.failed_count,
+            "embeddings_stored_count": embeddings,
+            "embedding_coverage_percent": embedding_coverage,
+            "fts_entries_count": fts_entries,
+            "fts_coverage_percent": fts_coverage,
+            "fts_index_health": "ok" if fts_entries == total else "needs_reindex",
+            "reranker_available": self.reranker.available,
+            "rerank_model": self.config.rerank_model,
+            "rerank_candidates": self.config.rerank_candidates,
+            "llm_available": self.llm.available,
+            "llm_model": self.config.llm_model,
             "jieba_available": jieba_available,
             "jieba_enabled": self.config.jieba_enabled,
             "cosine_dedup_threshold": self.config.cosine_dedup_threshold,
             "briefing_recent": self.config.briefing_recent,
             "briefing_important": self.config.briefing_important,
+            "api_timeout_seconds": self.config.api_timeout_seconds,
+            "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "rerank_api_metrics": self.reranker.metrics_snapshot(),
+            "llm_api_metrics": self.llm.metrics_snapshot(),
+            "rerank_last_applied": self.reranker.last_applied,
+            "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
+            "rerank_last_latency_ms": self.reranker.last_latency_ms,
+            "last_recall_latency_ms": self._last_recall_latency_ms,
+            "recall_latency_metrics": self._recall_latency_snapshot(),
+            "last_recall_trace": self._last_recall_trace,
             "spaces": self.storage.list_spaces(),
+            **graph_stats,
             **stats,
         }
 
@@ -420,6 +627,70 @@ class MemoryService:
         tags = self.storage.list_tags(self.space)
         return {"tags": tags, "count": len(tags), "space": self.space}
 
+    async def list_spaces(self) -> dict:
+        """Return all project spaces known to the local store."""
+        spaces = self.storage.list_spaces()
+        return {"spaces": spaces, "count": len(spaces), "current": self.space}
+
+    async def reindex(self, all_spaces: bool = False) -> dict:
+        """Rebuild FTS and graph indexes with current token/entity extraction."""
+        target_space = None if all_spaces else self.space
+        result = self.storage.reindex_fts(target_space)
+        if self.config.graph_enabled:
+            result.update(self.storage.reindex_graph(target_space))
+        self.storage.log_event(
+            self.space,
+            "reindex",
+            None,
+            {
+                "all_spaces": all_spaces,
+                "reindexed": result["reindexed"],
+                "graph_reindexed": result.get("graph_reindexed", 0),
+            },
+        )
+        self._signal_briefing_refresh()
+        return result
+
+    async def health(self) -> dict:
+        """Return memory health and observability metrics."""
+        stats = self.storage.get_stats(self.space)
+        graph_stats = self.storage.get_graph_stats(self.space)
+        total = stats.get("total_count", 0) or 0
+        embeddings = self.storage.count_embeddings(self.space)
+        fts_entries = self.storage.count_fts_entries(self.space)
+        duplicates = self.storage.count_exact_duplicates(self.space)
+        expired = self.storage.count_expired_working(self.space)
+        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
+        fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
+        duplicate_rate = round((duplicates / total) * 100, 2) if total else 0.0
+        return {
+            "space": self.space,
+            "total_count": total,
+            "embedding_coverage_percent": embedding_coverage,
+            "fts_coverage_percent": fts_coverage,
+            "fts_index_health": "ok" if fts_entries == total else "needs_reindex",
+            "reranker_available": self.reranker.available,
+            "llm_available": self.llm.available,
+            "embedding_queue_pending": self.embedder.queue_size,
+            "embedding_failed_count": self.embedder.failed_count,
+            "embedding_processed_count": self.embedder.processed_count,
+            "expired_working_count": expired,
+            "exact_duplicate_groups": duplicates,
+            "duplicate_rate_percent": duplicate_rate,
+            "api_timeout_seconds": self.config.api_timeout_seconds,
+            "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "rerank_api_metrics": self.reranker.metrics_snapshot(),
+            "llm_api_metrics": self.llm.metrics_snapshot(),
+            "rerank_last_applied": self.reranker.last_applied,
+            "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
+            "rerank_last_latency_ms": self.reranker.last_latency_ms,
+            "last_recall_latency_ms": self._last_recall_latency_ms,
+            "recall_latency_metrics": self._recall_latency_snapshot(),
+            "last_recall_trace": self._last_recall_trace,
+            **graph_stats,
+            "spaces": self.storage.list_spaces(),
+        }
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -446,7 +717,7 @@ class MemoryService:
             self.storage.update_embedding(rowid, vec)
             logger.debug("Embedding stored for memory_id=%s rowid=%s", memory_id, rowid)
         else:
-            logger.warning("No rowid found for memory_id=%s; embedding discarded", memory_id)
+            logger.debug("Memory %s deleted before embedding callback finished", memory_id)
 
         self.storage.refresh_briefing_cache(
             self.space,
@@ -464,3 +735,71 @@ class MemoryService:
             )
         except Exception as e:
             logger.debug("Briefing refresh error: %s", e)
+
+    def _record_recall_trace(
+        self,
+        space: str,
+        query: str,
+        requested_mode: str,
+        mode_used: str,
+        fts_candidates: int,
+        vec_candidates: int,
+        returned: int,
+        rerank_applied: bool,
+        rerank_fallback_reason: str | None,
+        latency_ms: float,
+        *,
+        all_spaces: bool = False,
+    ) -> None:
+        self._last_recall_latency_ms = latency_ms
+        self._recall_latencies.append(latency_ms)
+        trace = {
+            "query": query[:100],
+            "requested_mode": requested_mode,
+            "mode_used": mode_used,
+            "fts_candidates": fts_candidates,
+            "vec_candidates": vec_candidates,
+            "returned": returned,
+            "rerank_applied": rerank_applied,
+            "rerank_fallback_reason": rerank_fallback_reason,
+            "rerank_scores": self.reranker.last_scores[:10],
+            "latency_ms": latency_ms,
+            "all_spaces": all_spaces,
+        }
+        self._last_recall_trace = trace
+        self.storage.log_event(space, "recall_result", None, trace)
+
+    def _recall_latency_snapshot(self) -> dict:
+        latencies = list(self._recall_latencies)
+        return {
+            "recent_count": len(latencies),
+            "latency_p50_ms": self._percentile(latencies, 0.50),
+            "latency_p95_ms": self._percentile(latencies, 0.95),
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], quantile: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = round((len(ordered) - 1) * quantile)
+        return round(ordered[index], 3)
+
+    def _rerank_if_available(
+        self,
+        query: str,
+        candidates: list,
+        limit: int,
+    ) -> tuple[list, bool, str | None]:
+        if not candidates:
+            return [], False, "no_candidates"
+        if not self.reranker.available:
+            return candidates[:limit], False, "unavailable"
+        reranked = self.reranker.rerank(query, candidates, top_k=limit)
+        if getattr(self.reranker, "last_applied", True):
+            return reranked, True, None
+        return reranked[:limit], False, getattr(
+            self.reranker,
+            "last_fallback_reason",
+            "unknown",
+        )

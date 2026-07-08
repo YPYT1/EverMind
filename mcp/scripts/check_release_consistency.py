@@ -7,8 +7,8 @@ import re
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 INIT_PATH = REPO_ROOT / "src" / "evermind_mcp" / "__init__.py"
-SERVER_PATH = REPO_ROOT / "src" / "evermind_mcp" / "server.py"
-EXPECTED_TOOL_COUNT = 9
+SERVER_PATH = REPO_ROOT / "src" / "evermind_mcp" / "server_v2.py"
+EXPECTED_TOOL_COUNT = 13
 
 
 def read_project_version(pyproject_path: Path = PYPROJECT_PATH) -> str:
@@ -51,11 +51,11 @@ def run_checks() -> list[str]:
     tool_count = read_tool_count()
     if tool_count != EXPECTED_TOOL_COUNT:
         errors.append(
-            f"Tool count mismatch: server.py defines {tool_count}, expected {EXPECTED_TOOL_COUNT}"
+            f"Tool count mismatch: server_v2.py defines {tool_count}, expected {EXPECTED_TOOL_COUNT}"
         )
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for required in ["EverMind MCP", "evermind-mcp", "9 tools"]:
+    for required in ["EverMind MCP", "evermind-mcp", "13 tools"]:
         if required not in readme:
             errors.append(f"Missing '{required}' in README.md")
     for forbidden in ["tt-a1i", "uvx evermind-mcp@latest"]:

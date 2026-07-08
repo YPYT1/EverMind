@@ -41,20 +41,23 @@ The database lives at `~/.evermind/<project-slug>.db`. The project slug is auto-
 
 ## Vector Search Not Working
 
-If `recall()` only uses keyword search (mode: "fts" instead of "hybrid"), vector search is not installed.
+If `recall()` only uses keyword search (mode: "fts" instead of "hybrid" or "semantic+rerank"), vector search is not installed or the SiliconFlow key is missing.
 
 Install it:
 ```bash
 cd /path/to/EverMind/mcp
-uv pip install sqlite-vec sentence-transformers
+uv sync --extra full
 ```
 
-The first time you call `remember()` or `recall()` after installing, EverMind will download the embedding model (~22MB for BAAI/bge-small-zh-v1.5). Subsequent calls use the cached model.
+Then configure the local `.env`:
 
-To use a different embedding model:
 ```bash
-# Set in your shell or MCP server env:
-EVERMIND_EMBED_MODEL=all-MiniLM-L6-v2
+EVERMIND_SILICONFLOW_API_KEY=sk-...
+EVERMIND_EMBED_PROVIDER=siliconflow
+EVERMIND_EMBED_MODEL=Qwen/Qwen3-Embedding-8B
+EVERMIND_EMBED_DIM=512
+EVERMIND_RERANK_ENABLED=true
+EVERMIND_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
 ```
 
 ---
@@ -65,7 +68,7 @@ EverMind auto-detects your project name from `git remote get-url origin`. If you
 
 - Make sure you're running Claude Code / Cursor inside a git repository
 - Make sure the repo has a remote: `git remote -v`
-- Override manually: set `EVERMIND_DEFAULT_SPACE=coding:my-project` in the MCP server env block
+- Override manually: set `EVERMIND_DEFAULT_SPACE=coding:my-project` in the local `.env`
 
 ---
 

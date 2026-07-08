@@ -50,6 +50,8 @@ class EmbeddedStorage:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
+            if self._vec_available:
+                self._load_vec_extension(c)
             self._local.conn = c
             with self._conn_registry_lock:
                 self._all_connections.append(c)
@@ -64,10 +66,7 @@ class EmbeddedStorage:
 
         # Try to load sqlite-vec before creating any vec table
         try:
-            import sqlite_vec  # type: ignore
-            c.enable_load_extension(True)
-            sqlite_vec.load(c)
-            c.enable_load_extension(False)
+            self._load_vec_extension(c)
             self._vec_available = True
             logger.info("sqlite-vec loaded; vector search enabled")
         except (ImportError, Exception):
@@ -172,6 +171,16 @@ class EmbeddedStorage:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _load_vec_extension(conn: sqlite3.Connection) -> None:
+        import sqlite_vec  # type: ignore
+
+        conn.enable_load_extension(True)
+        try:
+            sqlite_vec.load(conn)
+        finally:
+            conn.enable_load_extension(False)
 
     @staticmethod
     def _now_ms() -> int:
@@ -391,7 +400,7 @@ class EmbeddedStorage:
             placeholders = ",".join("?" for _ in rowid_to_dist)
             mem_rows = self.conn.execute(
                 f"""
-                SELECT m.*
+                SELECT m.rowid AS rowid, m.*
                 FROM memories m
                 WHERE m.rowid IN ({placeholders})
                   AND m.space = ?
@@ -438,6 +447,12 @@ class EmbeddedStorage:
                     "DELETE FROM memories_fts WHERE rowid=?",
                     (row["rowid"],)
                 )
+                if self._vec_available:
+                    self.conn.execute(
+                        "DELETE FROM memory_vecs WHERE memory_rowid=?",
+                        (row["rowid"],),
+                    )
+                self._delete_graph_edges_for_memory(memory_id)
             cursor = self.conn.execute(
                 "DELETE FROM memories WHERE id=?", (memory_id,)
             )
@@ -453,6 +468,24 @@ class EmbeddedStorage:
     def expire_working_memories(self, space: str) -> int:
         now = self._now_ms()
         with self._write_lock:
+            rows = self.conn.execute(
+                """
+                SELECT rowid, id FROM memories
+                WHERE space=?
+                  AND layer='working'
+                  AND expires_at IS NOT NULL
+                  AND expires_at < ?
+                """,
+                (space, now),
+            ).fetchall()
+            for row in rows:
+                self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],))
+                if self._vec_available:
+                    self.conn.execute(
+                        "DELETE FROM memory_vecs WHERE memory_rowid=?",
+                        (row["rowid"],),
+                    )
+                self._delete_graph_edges_for_memory(row["id"])
             cursor = self.conn.execute(
                 """
                 DELETE FROM memories
@@ -612,6 +645,109 @@ class EmbeddedStorage:
             "newest_at": agg["newest_at"] if agg else None,
         }
 
+    def count_embeddings(self, space: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND embedding_ready=1",
+            (space,),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def count_fts_entries(self, space: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM memories m
+            JOIN memories_fts f ON m.rowid = f.rowid
+            WHERE m.space=?
+            """,
+            (space,),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def count_expired_working(self, space: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt FROM memories
+            WHERE space=?
+              AND layer='working'
+              AND expires_at IS NOT NULL
+              AND expires_at < ?
+            """,
+            (space, self._now_ms()),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def count_exact_duplicates(self, space: str) -> int:
+        rows = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM (
+                SELECT content
+                FROM memories
+                WHERE space=?
+                GROUP BY content
+                HAVING COUNT(*) > 1
+            )
+            """,
+            (space,),
+        ).fetchone()
+        return rows["cnt"] if rows else 0
+
+    def get_graph_stats(self, space: str) -> dict:
+        node_row = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM graph_nodes WHERE space=?",
+            (space,),
+        ).fetchone()
+        edge_row = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM graph_edges WHERE space=?",
+            (space,),
+        ).fetchone()
+        total_row = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=?",
+            (space,),
+        ).fetchone()
+        try:
+            linked_row = self.conn.execute(
+                """
+                SELECT COUNT(DISTINCT json_extract(meta, '$.memory_id')) AS cnt
+                FROM graph_edges
+                WHERE space=?
+                  AND edge_type='MENTIONED_IN'
+                  AND json_extract(meta, '$.memory_id') IS NOT NULL
+                """,
+                (space,),
+            ).fetchone()
+            linked = linked_row["cnt"] if linked_row else 0
+        except sqlite3.DatabaseError:
+            linked = self._count_graph_memory_ids_without_json(space)
+        total = total_row["cnt"] if total_row else 0
+        return {
+            "graph_node_count": node_row["cnt"] if node_row else 0,
+            "graph_edge_count": edge_row["cnt"] if edge_row else 0,
+            "graph_linked_memory_count": linked,
+            "graph_coverage_percent": round((linked / total) * 100, 2)
+            if total
+            else 100.0,
+        }
+
+    def _count_graph_memory_ids_without_json(self, space: str) -> int:
+        rows = self.conn.execute(
+            """
+            SELECT meta FROM graph_edges
+            WHERE space=? AND edge_type='MENTIONED_IN'
+            """,
+            (space,),
+        ).fetchall()
+        linked_ids = set()
+        for row in rows:
+            try:
+                memory_id = json.loads(row["meta"]).get("memory_id")
+                if memory_id:
+                    linked_ids.add(memory_id)
+            except Exception:
+                continue
+        return len(linked_ids)
+
     # ------------------------------------------------------------------
     # Dedup helper
     # ------------------------------------------------------------------
@@ -636,7 +772,6 @@ class EmbeddedStorage:
             if not row:
                 return
             rowid = row["rowid"]
-            old_content = row["content"]
             tags_json = row["tags"]
 
             # Update main table
@@ -651,6 +786,7 @@ class EmbeddedStorage:
                 "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
                 (rowid, processed_content, tags_json)
             )
+            self._delete_graph_edges_for_memory(memory_id)
             self.conn.commit()
 
     def find_similar_fts(
@@ -722,12 +858,60 @@ class EmbeddedStorage:
                 meta={"memory_id": memory_id},
             )
 
+    def _delete_graph_edges_for_memory(self, memory_id: str) -> None:
+        try:
+            self.conn.execute(
+                "DELETE FROM graph_edges WHERE json_extract(meta, '$.memory_id')=?",
+                (memory_id,),
+            )
+        except sqlite3.DatabaseError:
+            rows = self.conn.execute("SELECT id, meta FROM graph_edges").fetchall()
+            for row in rows:
+                try:
+                    if json.loads(row["meta"]).get("memory_id") == memory_id:
+                        self.conn.execute(
+                            "DELETE FROM graph_edges WHERE id=?",
+                            (row["id"],),
+                        )
+                except Exception:
+                    continue
+
     def search_graph(self, space: str, entity_label: str, limit: int = 10) -> list:
+        entity_label = entity_label.strip()
+        if not entity_label:
+            return []
+        normalized = entity_label.replace("\\", "/")
+        patterns = [entity_label, normalized, normalized.lower()]
+        if "/" in normalized:
+            patterns.append(Path(normalized).name)
+
         nodes = self.conn.execute(
-            "SELECT * FROM graph_nodes WHERE space=? AND label LIKE ?",
-            (space, f"%{entity_label}%"),
+            """
+            SELECT * FROM graph_nodes
+            WHERE space=?
+              AND (
+                lower(label) LIKE lower(?)
+                OR lower(label) LIKE lower(?)
+                OR lower(label) LIKE lower(?)
+                OR lower(label) LIKE lower(?)
+              )
+            ORDER BY
+              CASE WHEN lower(label)=lower(?) THEN 0 ELSE 1 END,
+              length(label)
+            LIMIT ?
+            """,
+            (
+                space,
+                f"%{patterns[0]}%",
+                f"%{patterns[1]}%",
+                f"%{patterns[2]}%",
+                f"%{patterns[-1]}%",
+                entity_label,
+                max(limit * 3, 10),
+            ),
         ).fetchall()
         results = []
+        seen: set[str] = set()
         for node in nodes:
             edges = self.conn.execute(
                 """
@@ -746,6 +930,9 @@ class EmbeddedStorage:
                     "SELECT * FROM memories WHERE id=?", (memory_id,)
                 ).fetchone()
                 if mem_row:
+                    if mem_row["id"] in seen:
+                        continue
+                    seen.add(mem_row["id"])
                     results.append({
                         "entity": node["label"],
                         "memory": self._row_to_memory(mem_row).to_dict(),
@@ -754,30 +941,146 @@ class EmbeddedStorage:
 
     def extract_entities_from_content(self, content: str) -> list:
         found: list = []
-        # File paths
+        normalized_content = content.replace("\\", "/")
+
+        def add_path_aliases(path_text: str) -> None:
+            normalized_path = path_text.replace("\\", "/").strip("`'\".,;:()[]{}")
+            found.append(normalized_path)
+            path = Path(normalized_path)
+            if path.name:
+                found.append(path.name)
+            parts = [part for part in normalized_path.split("/") if part]
+            if len(parts) >= 2:
+                found.append("/".join(parts[-2:]))
+            for part in parts[:-1]:
+                if len(part) >= 3:
+                    found.append(part)
+
+        # File paths plus useful aliases such as service.py and publish/service.py.
         for m in re.finditer(
-            r"\b[\w/\\]+\.(py|ts|js|go|rs|java|cpp|h|json|yaml|toml|md)\b",
-            content,
+            r"(?<!\w)[\w./\\-]+\.(?:py|ts|js|go|rs|java|cpp|h|json|yaml|toml|md)\b",
+            normalized_content,
         ):
-            found.append(m.group(0))
+            add_path_aliases(m.group(0))
+
         # CamelCase identifiers
         for m in re.finditer(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b", content):
             found.append(m.group(0))
+
         # module/class/function/def/import names
         for m in re.finditer(
-            r"(?:module|class|function|def|import)\s+([\w_]+)", content
+            r"(?:module|class|function|def|import)\s+([\w_./-]+)", content
         ):
             found.append(m.group(1))
-        # Deduplicate, filter short, limit to 10
+
+        # snake_case identifiers and common two-word module descriptions
+        for m in re.finditer(r"\b[a-z][a-z0-9]+(?:_[a-z0-9]+)+\b", content):
+            found.append(m.group(0))
+        for m in re.finditer(
+            r"\b([a-z][a-z0-9-]+(?:\s+(?:runner|service|module|flow|pipeline|action|worker|test|command)))\b",
+            content.lower(),
+        ):
+            found.append(m.group(1))
+
+        technical_terms = (
+            "greenlet",
+            "playwright",
+            "pytest",
+            "aria",
+            "role",
+            "bitbrowser",
+            "sqlite-vec",
+            "qwen3",
+            "deepseek",
+            "siliconflow",
+            "rerank",
+            "reranker",
+            "embedding",
+            "embeddings",
+            "fts",
+            "bm25",
+            "jieba",
+            "youtube",
+            "mcp",
+            "cursor",
+        )
+        lower_content = content.lower()
+        for term in technical_terms:
+            if re.search(rf"(?<![\w-]){re.escape(term)}(?![\w-])", lower_content):
+                found.append(term)
+
+        chinese_terms = (
+            "发布流程",
+            "文本选择器",
+            "中文",
+            "索引",
+            "重建",
+            "并发",
+            "会话",
+            "生命周期",
+            "测试命令",
+            "运行命令",
+            "决策",
+            "禁止",
+            "必须",
+            "错误",
+            "异常",
+            "流程",
+        )
+        for term in chinese_terms:
+            if term in content:
+                found.append(term)
+
+        # Deduplicate case-insensitively, filter short, keep enough context.
         seen: set = set()
         result: list = []
         for entity in found:
-            if len(entity) >= 3 and entity not in seen:
-                seen.add(entity)
-                result.append(entity)
-            if len(result) >= 10:
+            cleaned = str(entity).strip("`'\".,;:()[]{}")
+            if len(cleaned) < 2:
+                continue
+            key = cleaned.lower()
+            if key not in seen:
+                seen.add(key)
+                result.append(cleaned)
+            if len(result) >= 30:
                 break
         return result
+
+    def reindex_graph(self, space: str | None = None) -> dict:
+        """Rebuild graph nodes/edges from current memory content."""
+        params: tuple = (space,) if space else ()
+        where = "WHERE space=?" if space else ""
+        rows = self.conn.execute(
+            f"SELECT id, content, space FROM memories {where}",
+            params,
+        ).fetchall()
+        with self._write_lock:
+            if space:
+                self.conn.execute("DELETE FROM graph_edges WHERE space=?", (space,))
+                self.conn.execute("DELETE FROM graph_nodes WHERE space=?", (space,))
+            else:
+                self.conn.execute("DELETE FROM graph_edges")
+                self.conn.execute("DELETE FROM graph_nodes")
+            self.conn.commit()
+
+        linked = 0
+        edge_count_before = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM graph_edges"
+        ).fetchone()["cnt"]
+        for row in rows:
+            entities = self.extract_entities_from_content(row["content"])
+            if entities:
+                linked += 1
+                self.link_memory_to_entities(row["id"], row["space"], entities)
+        edge_count_after = self.conn.execute(
+            "SELECT COUNT(*) AS cnt FROM graph_edges"
+        ).fetchone()["cnt"]
+        return {
+            "graph_reindexed": len(rows),
+            "graph_linked_memories": linked,
+            "graph_edges_created": edge_count_after - edge_count_before,
+            "spaces": sorted({row["space"] for row in rows}),
+        }
 
     # ------------------------------------------------------------------
     # Export / compact / utility
@@ -825,6 +1128,9 @@ class EmbeddedStorage:
             tags=["compacted"],
             role="system",
         )
+        summary_entities = self.extract_entities_from_content(summary)
+        if summary_entities:
+            self.link_memory_to_entities(summary_memory.id, space, summary_entities)
         ids = [m.id for m in old_memories]
         placeholders = ",".join("?" * len(ids))
         with self._write_lock:
@@ -834,14 +1140,44 @@ class EmbeddedStorage:
                     "SELECT rowid, content, tags FROM memories WHERE id=?", (m.id,)
                 ).fetchone()
                 if row:
-                    self.conn.execute(
-                        "INSERT INTO memories_fts(memories_fts, rowid, content, tags)"
-                        " VALUES ('delete', ?, ?, ?)",
-                        (row["rowid"], row["content"], row["tags"])
-                    )
+                    self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],))
+                    if self._vec_available:
+                        self.conn.execute(
+                            "DELETE FROM memory_vecs WHERE memory_rowid=?",
+                            (row["rowid"],),
+                        )
+                    self._delete_graph_edges_for_memory(m.id)
             self.conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
             self.conn.commit()
         return {"summarized": len(old_memories), "created_id": summary_memory.id}
+
+    def reindex_fts(self, space: str | None = None) -> dict:
+        """Rebuild FTS entries with the current tokenizer/preprocessor."""
+        params: tuple = (space,) if space else ()
+        where = "WHERE space=?" if space else ""
+        rows = self.conn.execute(
+            f"SELECT rowid, content, tags, space FROM memories {where}",
+            params,
+        ).fetchall()
+        with self._write_lock:
+            if space:
+                rowids = [row["rowid"] for row in rows]
+                if rowids:
+                    placeholders = ",".join("?" for _ in rowids)
+                    self.conn.execute(
+                        f"DELETE FROM memories_fts WHERE rowid IN ({placeholders})",
+                        rowids,
+                    )
+            else:
+                self.conn.execute("DELETE FROM memories_fts")
+            for row in rows:
+                self.conn.execute(
+                    "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                    (row["rowid"], _process_for_fts(row["content"]), row["tags"]),
+                )
+            self.conn.commit()
+        spaces = sorted({row["space"] for row in rows})
+        return {"reindexed": len(rows), "spaces": spaces}
 
     def list_tags(self, space: str) -> list:
         rows = self.conn.execute(
