@@ -13,6 +13,16 @@ from .types_v2 import MemoryRow, BriefingData
 logger = logging.getLogger(__name__)
 
 
+def _process_for_fts(text: str) -> str:
+    """Preprocess text for FTS indexing. Uses jieba for Chinese segmentation if available."""
+    try:
+        import jieba  # type: ignore
+        tokens = list(jieba.cut(text, cut_all=False))
+        return " ".join(t for t in tokens if t.strip())
+    except ImportError:
+        return text
+
+
 class EmbeddedStorage:
     """SQLite-backed storage with FTS5, optional sqlite-vec, and 6-layer memory model."""
 
@@ -83,31 +93,12 @@ class EmbeddedStorage:
                     embedding_ready INTEGER NOT NULL DEFAULT 0
                 );
 
-                -- FTS5
+                -- FTS5 (self-managed, no external content or triggers)
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                     content,
                     tags,
-                    content='memories',
-                    content_rowid='rowid',
                     tokenize='unicode61 remove_diacritics 1'
                 );
-
-                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, content, tags)
-                    VALUES (new.rowid, new.content, new.tags);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, tags)
-                    VALUES ('delete', old.rowid, old.content, old.tags);
-                    INSERT INTO memories_fts(rowid, content, tags)
-                    VALUES (new.rowid, new.content, new.tags);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, tags)
-                    VALUES ('delete', old.rowid, old.content, old.tags);
-                END;
 
                 -- graph_nodes
                 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -237,6 +228,13 @@ class EmbeddedStorage:
                 (memory_id, content, space, layer, memory_type, role, importance,
                  tags_json, meta_json, now, now, expires_at),
             )
+            # Manually insert into FTS with jieba preprocessing
+            inserted_rowid = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            processed_content = _process_for_fts(content)
+            self.conn.execute(
+                "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                (inserted_rowid, processed_content, tags_json)
+            )
             self.conn.commit()
 
         return MemoryRow(
@@ -332,7 +330,8 @@ class EmbeddedStorage:
 
     def search_fts(self, query: str, space: str, limit: int = 10, layer: str = None, tags: list = None) -> list[MemoryRow]:
         now = self._now_ms()
-        params: list = [self._fts_query(query), space]
+        processed_query = _process_for_fts(query)
+        params: list = [self._fts_query(processed_query), space]
         extra = ""
         if layer is not None:
             extra += " AND m.layer=?"
@@ -430,6 +429,15 @@ class EmbeddedStorage:
 
     def delete_memory(self, memory_id: str) -> bool:
         with self._write_lock:
+            # Remove from FTS before deleting the row (need the rowid while it exists)
+            row = self.conn.execute(
+                "SELECT rowid, content, tags FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+            if row:
+                self.conn.execute(
+                    "DELETE FROM memories_fts WHERE rowid=?",
+                    (row["rowid"],)
+                )
             cursor = self.conn.execute(
                 "DELETE FROM memories WHERE id=?", (memory_id,)
             )
@@ -621,18 +629,27 @@ class EmbeddedStorage:
         """Update the content of an existing memory (used by fuzzy dedup merge)."""
         now = self._now_ms()
         with self._write_lock:
+            # Get rowid and old data for FTS update
+            row = self.conn.execute(
+                "SELECT rowid, content, tags FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+            if not row:
+                return
+            rowid = row["rowid"]
+            old_content = row["content"]
+            tags_json = row["tags"]
+
+            # Update main table
             self.conn.execute(
                 "UPDATE memories SET content=?, updated_at=? WHERE id=?",
                 (new_content, now, memory_id),
             )
-            self.conn.commit()
-        # Re-index in FTS5 — the content trigger handles INSERT/DELETE but not UPDATE
-        # so we manually update the FTS shadow table
-        with self._write_lock:
+            # Re-index in FTS: delete old row by rowid, insert new processed content
+            self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (rowid,))
+            processed_content = _process_for_fts(new_content)
             self.conn.execute(
-                "UPDATE memories_fts SET content=? WHERE rowid = "
-                "(SELECT rowid FROM memories WHERE id=?)",
-                (new_content, memory_id),
+                "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                (rowid, processed_content, tags_json)
             )
             self.conn.commit()
 
@@ -761,6 +778,101 @@ class EmbeddedStorage:
             if len(result) >= 10:
                 break
         return result
+
+    # ------------------------------------------------------------------
+    # Export / compact / utility
+    # ------------------------------------------------------------------
+
+    def export_memories(self, space: str, layer: str = None) -> list:
+        sql = "SELECT * FROM memories WHERE space=? AND (expires_at IS NULL OR expires_at > ?)"
+        params = [space, self._now_ms()]
+        if layer:
+            sql += " AND layer=?"
+            params.append(layer)
+        sql += (
+            " ORDER BY CASE layer"
+            " WHEN 'archive' THEN 0"
+            " WHEN 'semantic' THEN 1"
+            " WHEN 'procedural' THEN 2"
+            " WHEN 'episodic' THEN 3"
+            " ELSE 4 END,"
+            " importance DESC, updated_at DESC"
+        )
+        rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_memory(row) for row in rows]
+
+    def compact_episodic(self, space: str, older_than_days: int = 30) -> dict:
+        cutoff_ms = self._now_ms() - (older_than_days * 24 * 3600 * 1000)
+        old_rows = self.conn.execute(
+            "SELECT * FROM memories WHERE space=? AND layer='episodic' AND created_at < ?",
+            (space, cutoff_ms)
+        ).fetchall()
+        if not old_rows:
+            return {"summarized": 0, "created_id": None}
+        old_memories = [self._row_to_memory(r) for r in old_rows]
+        summary_parts = [f"- {m.content}" for m in old_memories[:50]]
+        summary = (
+            f"Compacted {len(old_memories)} episodic memories"
+            f" (older than {older_than_days}d):\n"
+            + "\n".join(summary_parts)
+        )
+        summary_memory = self.insert_memory(
+            content=summary,
+            space=space,
+            layer="semantic",
+            memory_type="semantic",
+            importance=1,
+            tags=["compacted"],
+            role="system",
+        )
+        ids = [m.id for m in old_memories]
+        placeholders = ",".join("?" * len(ids))
+        with self._write_lock:
+            # Remove FTS entries for deleted rows before deleting the main rows
+            for m in old_memories:
+                row = self.conn.execute(
+                    "SELECT rowid, content, tags FROM memories WHERE id=?", (m.id,)
+                ).fetchone()
+                if row:
+                    self.conn.execute(
+                        "INSERT INTO memories_fts(memories_fts, rowid, content, tags)"
+                        " VALUES ('delete', ?, ?, ?)",
+                        (row["rowid"], row["content"], row["tags"])
+                    )
+            self.conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+            self.conn.commit()
+        return {"summarized": len(old_memories), "created_id": summary_memory.id}
+
+    def list_tags(self, space: str) -> list:
+        rows = self.conn.execute(
+            "SELECT DISTINCT tags FROM memories WHERE space=? AND tags != '[]'", (space,)
+        ).fetchall()
+        all_tags: set = set()
+        for row in rows:
+            try:
+                tags = json.loads(row[0])
+                if isinstance(tags, list):
+                    all_tags.update(t for t in tags if t)
+            except Exception:
+                pass
+        return sorted(all_tags)
+
+    def search_fts_multi(self, query: str, spaces: list, limit: int = 10) -> list:
+        all_results = []
+        for space in spaces:
+            results = self.search_fts(query, space, limit=limit)
+            all_results.extend(results)
+        seen: set = set()
+        deduped = []
+        for r in sorted(all_results, key=lambda x: x.score, reverse=True):
+            if r.id not in seen:
+                seen.add(r.id)
+                deduped.append(r)
+        return deduped[:limit]
+
+    def list_spaces(self) -> list:
+        rows = self.conn.execute("SELECT DISTINCT space FROM memories").fetchall()
+        return sorted(r[0] for r in rows)
 
     # ------------------------------------------------------------------
     # Close

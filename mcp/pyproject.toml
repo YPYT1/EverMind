@@ -24,7 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 vector = ["sqlite-vec>=0.1.6"]
 embedding = ["sentence-transformers>=3.0"]
-full = ["sqlite-vec>=0.1.6", "sentence-transformers>=3.0"]
+chinese = ["jieba>=0.42"]
+full = ["sqlite-vec>=0.1.6", "sentence-transformers>=3.0", "jieba>=0.42"]
 
 [project.urls]
 Homepage = "https://github.com/YPYT1/EverMind"

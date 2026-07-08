@@ -1,7 +1,7 @@
 """
-EverMind MCP Server v2 — 7-tool interface.
+EverMind MCP Server v2 — 11-tool interface.
 
-Tools: remember, recall, forget, briefing, list, graph_explore
+Tools: remember, recall, forget, briefing, list, graph_explore, status, export, compact, tags
 """
 
 from __future__ import annotations
@@ -102,6 +102,15 @@ TOOLS: list[types.Tool] = [
                     "items": {"type": "string"},
                     "description": "Filter by tags (optional)",
                 },
+                "space": {
+                    "type": "string",
+                    "description": "Optional: override the auto-detected project space",
+                },
+                "all_spaces": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, search across ALL known project spaces",
+                },
             },
             "required": ["query"],
         },
@@ -187,6 +196,52 @@ TOOLS: list[types.Tool] = [
             "required": ["entity"],
         },
     ),
+    types.Tool(
+        name="status",
+        description="Show EverMind system status: memory counts by layer, embedding availability, search mode, jieba Chinese FTS status, all known project spaces. Call to understand the current state of EverMind.",
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
+    types.Tool(
+        name="export",
+        description="Export all memories or a specific layer as Markdown or JSON. Use to audit stored knowledge, share project context, or create documentation from accumulated memory.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "layer": {
+                    "type": "string",
+                    "enum": ["working", "episodic", "semantic", "procedural", "archive"],
+                    "description": "Export only this layer (optional)",
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "json"],
+                    "default": "markdown",
+                },
+            },
+            "required": [],
+        },
+    ),
+    types.Tool(
+        name="compact",
+        description="Compact old episodic memories into a semantic summary. Finds episodic memories older than the specified days and merges them. Useful for long-running projects where stale memories pollute recall results.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "older_than_days": {
+                    "type": "integer",
+                    "default": 30,
+                    "minimum": 1,
+                    "description": "Compact episodic memories older than this many days",
+                },
+            },
+            "required": [],
+        },
+    ),
+    types.Tool(
+        name="tags",
+        description="List all tags currently in use in this project. Use to discover available tag categories before filtering with recall(tags=[...]) or list(tags=[...]).",
+        inputSchema={"type": "object", "properties": {}, "required": []},
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -216,12 +271,16 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
             )
 
         elif name == "recall":
+            all_spaces = bool(args.get("all_spaces", False))
+            space_override = args.get("space")
             result = await _svc.recall(
                 query=args["query"],
                 limit=args.get("limit", 10),
                 mode=args.get("mode", "hybrid"),
                 layer=args.get("layer"),
                 tags=args.get("tags"),
+                all_spaces=all_spaces,
+                space=space_override,
             )
 
         elif name == "forget":
@@ -239,6 +298,21 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
 
         elif name == "graph_explore":
             result = await _svc.graph_explore(args["entity"])
+
+        elif name == "status":
+            result = await _svc.status()
+
+        elif name == "export":
+            layer = args.get("layer")
+            fmt = args.get("format", "markdown")
+            result = await _svc.export(layer=layer, format=fmt)
+
+        elif name == "compact":
+            older = int(args.get("older_than_days", 30))
+            result = await _svc.compact(older_than_days=older)
+
+        elif name == "tags":
+            result = await _svc.list_tags()
 
         else:
             result = {"error": f"Unknown tool: {name}", "tool": name}

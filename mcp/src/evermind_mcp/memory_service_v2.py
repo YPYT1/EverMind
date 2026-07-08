@@ -161,7 +161,19 @@ class MemoryService:
                 "similar_merged": True,
             }
 
-        # fuzzy dedup removed - too noisy, exact match only now
+        # Cosine dedup: merge near-duplicates above threshold
+        if self.embedder.available and self.config.cosine_dedup_threshold > 0:
+            new_vec = self.embedder.encode(content)
+            if new_vec is not None:
+                similar_vecs = self.storage.search_vec(new_vec, space, limit=3)
+                for candidate in similar_vecs:
+                    cand_vec = self.embedder.encode(candidate.content)
+                    if cand_vec is not None:
+                        sim = self.embedder.cosine_similarity(new_vec, cand_vec)
+                        if sim >= self.config.cosine_dedup_threshold:
+                            self.storage.update_memory_content(candidate.id, content)
+                            self.storage.log_event(space, "remember_merged", candidate.id, {"reason": "cosine_similarity", "score": round(sim, 4)})
+                            return {"id": candidate.id, "action": "merged", "layer": candidate.layer, "type": candidate.memory_type, "similar_merged": True, "similarity": round(sim, 4)}
 
         # Insert new memory
         memory = self.storage.insert_memory(
@@ -208,6 +220,7 @@ class MemoryService:
         space: str = None,
         layer: str = None,
         tags: list = None,
+        all_spaces: bool = False,
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
@@ -215,6 +228,20 @@ class MemoryService:
         """
         if space is None:
             space = self.space
+
+        # All-spaces search: search across all known spaces using multi-space FTS
+        if all_spaces:
+            known_spaces = self.storage.list_spaces()
+            fts_results = self.storage.search_fts_multi(query, known_spaces, limit=limit * 2)
+            mode_used = "fts"
+            final_list = fts_results[:limit]
+            return {
+                "results": [m.to_dict() for m in final_list],
+                "mode": mode_used,
+                "count": len(final_list),
+                "query": query,
+                "all_spaces": True,
+            }
 
         # Quick working-memory expiry
         self.storage.expire_working_memories(space)
@@ -341,12 +368,57 @@ class MemoryService:
     async def status(self) -> dict:
         """Return service health and storage statistics."""
         stats = self.storage.get_stats(self.space)
+        try:
+            import jieba  # noqa: F401
+            jieba_available = True
+        except ImportError:
+            jieba_available = False
         return {
             "space": self.space,
             "embedding_available": self.embedder.available,
             "embed_model": self.config.embed_model,
+            "jieba_available": jieba_available,
+            "jieba_enabled": self.config.jieba_enabled,
+            "cosine_dedup_threshold": self.config.cosine_dedup_threshold,
+            "briefing_recent": self.config.briefing_recent,
+            "briefing_important": self.config.briefing_important,
+            "spaces": self.storage.list_spaces(),
             **stats,
         }
+
+    async def export(self, layer: str = None, format: str = "markdown") -> dict:
+        """Export memories as JSON or Markdown."""
+        space = self.space
+        memories = self.storage.export_memories(space, layer=layer)
+        if format == "json":
+            return {"memories": [m.to_dict() for m in memories], "count": len(memories), "space": space, "format": "json"}
+        # Markdown
+        from datetime import datetime, timezone
+        lines = [f"# EverMind Export — {space}", "", f"*{len(memories)} memories*", ""]
+        layers_map = {}
+        for m in memories:
+            layers_map.setdefault(m.layer, []).append(m)
+        for lyr, label in [("archive", "## Archive"), ("semantic", "## Semantic"), ("procedural", "## Procedural"), ("episodic", "## Episodic"), ("working", "## Working")]:
+            if lyr in layers_map:
+                lines += [label, ""]
+                for m in layers_map[lyr]:
+                    dt = datetime.fromtimestamp(m.created_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+                    tags_str = f" `{'` `'.join(m.tags)}`" if m.tags else ""
+                    lines += [f"- **[{m.memory_type}]**{tags_str} *{dt}*", f"  {m.content}", ""]
+        return {"content": "\n".join(lines), "count": len(memories), "space": space, "format": "markdown"}
+
+    async def compact(self, older_than_days: int = 30) -> dict:
+        """Compact old episodic memories into a summary."""
+        result = self.storage.compact_episodic(self.space, older_than_days=older_than_days)
+        if result["summarized"] > 0:
+            self.storage.log_event(self.space, "compact", result["created_id"], {"summarized_count": result["summarized"]})
+            self._signal_briefing_refresh()
+        return result
+
+    async def list_tags(self) -> dict:
+        """Return all tags used in this space."""
+        tags = self.storage.list_tags(self.space)
+        return {"tags": tags, "count": len(tags), "space": self.space}
 
     # ------------------------------------------------------------------
     # Internal helpers

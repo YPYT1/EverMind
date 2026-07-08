@@ -129,6 +129,7 @@ class TestEmbeddedStorage:
         expires_at: int | None = None,
     ) -> str:
         import uuid as _uuid
+        from evermind_mcp.storage import _process_for_fts
         mid = memory_id or str(_uuid.uuid4())
         now = int(time.time() * 1000)
         exp = expires_at
@@ -141,6 +142,12 @@ class TestEmbeddedStorage:
             VALUES (?, ?, ?, ?, ?, 'user', ?, '[]', '{}', ?, ?, ?, 0)
             """,
             (mid, content, space, layer, memory_type, importance, now, now, exp),
+        )
+        # Keep FTS in sync (self-managed since jieba support was added)
+        inserted_rowid = db.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        db.conn.execute(
+            "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+            (inserted_rowid, _process_for_fts(content), "[]"),
         )
         db.conn.commit()
         return mid

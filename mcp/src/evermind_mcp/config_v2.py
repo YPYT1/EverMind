@@ -30,6 +30,10 @@ class EverMindConfig:
     # Graph
     graph_enabled: bool = True        # env: EVERMIND_GRAPH_ENABLED
 
+    # Jieba / cosine dedup
+    jieba_enabled: bool = True
+    cosine_dedup_threshold: float = 0.95
+
     def db_path(self, space: str) -> Path:
         """Return the SQLite file path for a given project space."""
         slug = space.replace(":", "_").replace("/", "_")
@@ -52,4 +56,6 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         briefing_recent=int(_env("EVERMIND_BRIEFING_RECENT", "8")),
         briefing_important=int(_env("EVERMIND_BRIEFING_IMPORTANT", "5")),
         graph_enabled=_env("EVERMIND_GRAPH_ENABLED", "true").lower() != "false",
+        jieba_enabled=_env("EVERMIND_JIEBA_ENABLED", "true").lower() != "false",
+        cosine_dedup_threshold=float(_env("EVERMIND_COSINE_DEDUP_THRESHOLD", "0.95")),
     )

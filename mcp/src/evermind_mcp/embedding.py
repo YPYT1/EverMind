@@ -124,3 +124,17 @@ class EmbeddingManager:
     def _on_emit(self, memory_id: str, vec: list[float]) -> None:
         if self._on_embed:
             self._on_embed(memory_id, vec)
+
+    def cosine_similarity(self, vec1: list, vec2: list) -> float:
+        """Compute cosine similarity between two embedding vectors. Returns 0.0 on error."""
+        try:
+            if not vec1 or not vec2 or len(vec1) != len(vec2):
+                return 0.0
+            dot = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = sum(a * a for a in vec1) ** 0.5
+            norm2 = sum(b * b for b in vec2) ** 0.5
+            if norm1 == 0.0 or norm2 == 0.0:
+                return 0.0
+            return dot / (norm1 * norm2)
+        except Exception:
+            return 0.0
