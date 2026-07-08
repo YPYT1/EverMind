@@ -1,9 +1,13 @@
 [project]
 name = "evermind-mcp"
 version = "2.0.0"
-description = "EverMind v2 - Local-first 6-layer AI memory system (zero config)"
+description = "EverMind v2 — MCP server for local AI memory. 6-layer persistent recall across sessions with zero config. No cloud, no external service."
 readme = "README.md"
 license = "MIT"
+authors = [
+    {name = "EverMind Contributors"}
+]
+keywords = ["mcp", "memory", "ai", "claude", "cursor", "coding", "local-first", "sqlite"]
 requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3.11",

@@ -1,70 +1,44 @@
 # Components
 
-EverMind is presented as one local-first memory system with four user-facing components.
+EverMind v2 consists of three components:
 
-## EverMind Runtime
+## MCP Server
 
-EverMind Runtime is the local realtime memory backend. It owns fast project and session recall, local memory files, indexes, and runtime state.
+The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI client via `uv run`. It exposes 4 tools over stdio transport.
 
-In the local-first edition this runtime is EverOS-compatible, so existing EverOS deployments can be used as the storage and retrieval engine behind EverMind Runtime.
+**Entry point**: `evermind_mcp.server_v2:main_sync`
 
-Use it for:
+**Key modules**:
+- `server_v2.py` — 4-tool MCP server, tool dispatch
+- `memory_service_v2.py` — business logic: remember, recall, briefing, dedup
+- `storage.py` — SQLite + FTS5 + sqlite-vec storage layer
+- `embedding.py` — optional local sentence-transformers with background queue
+- `project_detector.py` — git remote → project slug auto-detection
+- `config_v2.py` — zero-config loader, 4 optional env vars
+- `types_v2.py` — shared dataclasses (MemoryRow, BriefingData)
 
-- session context;
-- project facts that help future recall;
-- user preferences;
-- memory search before and during coding work.
+## Skills
 
-## EverMind MCP
+Skill files in `skills/` shape how AI agents use the MCP tools. They are loaded via `$skill-name` syntax in CLAUDE.md, AGENTS.md, or .cursorrules.
 
-EverMind MCP is the bridge between agents and memory. It lives directly under `mcp/` and exposes the memory tools used by Codex, Claude Code, Cursor, Devin, and other MCP clients.
+Available skills:
+- `skills/evermind/SKILL.md` — core session workflow
+- `skills/evermind-archive/SKILL.md` — permanent memory patterns
+- `skills/evermind-code-graph/SKILL.md` — codebase exploration
+- `skills/project-memory/SKILL.md` — first-time initialization
 
-It is started with:
+## Code Graph (Optional)
 
-```text
-uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-```
+`evermind-code-graph` is a separate MCP tool (not included in this repo) that indexes repository structure and exposes graph traversal, code search, and call path tracing. EverMind's skills and agent instructions use it during codebase exploration.
 
-Use it for:
+## Storage
 
-- `briefing`;
-- `recall`;
-- `remember`;
-- archive candidate creation;
-- official archive commit after explicit confirmation.
+One SQLite file per project: `~/.evermind/<project-slug>.db`
 
-## EverMind Archive
-
-EverMind Archive is the reviewed long-term project knowledge layer. It stores durable facts as Markdown so users can read, diff, edit, and back up the knowledge base without a special UI.
-
-Use it for:
-
-- architecture decisions;
-- module responsibilities;
-- runtime configuration;
-- interface contracts;
-- test and verification practices;
-- known pitfalls;
-- modification history.
-
-EverMind uses candidate-first writes by default so agents cannot silently pollute official notes.
-
-## EverMind Code Graph
-
-EverMind Code Graph indexes repositories for code-aware memory tasks.
-
-Use it for:
-
-- architecture search;
-- call-path tracing;
-- code search;
-- snippet lookup;
-- change-impact analysis.
-
-The stable conclusions from code graph analysis should be written into EverMind Archive only when they are useful for future work.
-
-## Project Boundary
-
-EverMind owns orchestration, installation, configuration, health checks, skills, agent templates, and the branded user experience.
-
-The public user path is intentionally written as one integrated EverMind system: users install EverMind, run EverMind setup, copy EverMind MCP snippets, and ask their agent to use EverMind memory.
+Tables:
+- `memories` — all stored memories with layer/type/importance metadata
+- `memories_fts` — FTS5 virtual table for BM25 keyword search
+- `memory_vecs` — sqlite-vec virtual table for KNN vector search (optional)
+- `graph_nodes` / `graph_edges` — entity relationship graph (Phase 3)
+- `event_log` — audit trail of all memory operations
+- `briefing_cache` — pre-materialized session context (<5ms load)

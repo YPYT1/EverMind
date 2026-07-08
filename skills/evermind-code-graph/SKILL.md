@@ -26,6 +26,22 @@ evermind-code-graph cli search_code '{"project":"<project-name>","pattern":"<pat
 evermind-code-graph cli trace_path '{"project":"<project-name>","function_name":"<function>"}'
 ```
 
+## search_graph vs search_code
+
+**search_graph** — queries the parsed knowledge graph. Use for:
+- Understanding module relationships and call paths
+- Finding which files depend on a function
+- Tracing what calls what (`trace_path`)
+- Discovering architecture patterns
+
+**search_code** — runs text pattern matching in source files (like grep). Use for:
+- Finding a specific function or class by name
+- Locating all usages of a symbol
+- Finding configuration values or constants
+- Searching for error messages or log strings
+
+Rule of thumb: use search_graph when you want to understand *relationships*; use search_code when you want to find *text*.
+
 ## Rules
 
 - Use evermind-code-graph for discovery; verify important facts in real files.

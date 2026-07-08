@@ -90,4 +90,18 @@ evermind-code-graph cli search_code '{"project":"<name>","pattern":"<symbol>"}'
 evermind-code-graph cli trace_path '{"project":"<name>","function_name":"<fn>"}'
 ```
 
+---
+
+## Skills
+
+Add to your project's AGENTS.md to load EverMind skills:
+
+Available skills (reference by full path):
+- skills/evermind/SKILL.md — core memory workflow (load in every project)
+- skills/evermind-archive/SKILL.md — writing permanent memories
+- skills/evermind-code-graph/SKILL.md — codebase exploration
+- skills/project-memory/SKILL.md — first-time project initialization
+
+---
+
 **Safety**: Never save API keys, tokens, passwords, or credentials.

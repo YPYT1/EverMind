@@ -6,8 +6,7 @@ EverMind is local-first, but local services and local memory still need careful 
 
 - Bind the local runtime to `127.0.0.1` unless you provide your own authentication gateway.
 - Keep `.env` out of git.
-- Use candidate-first archive writes.
-- Review archive candidates before committing official notes.
+- Use `importance=0` or `importance=1` for routine memories. Reserve `importance=2` for decisions and rules you want permanent.
 - Treat the archive as project knowledge, not a secret store.
 
 ## Never Store Secrets
@@ -37,15 +36,15 @@ host = 127.0.0.1
 
 Avoid binding to `0.0.0.0` unless you understand the network exposure and provide an authentication layer.
 
-## Archive Review
+## Permanent Archive Writes
 
-EverMind Archive is intentionally reviewed Markdown. Before committing a candidate:
+In v2 there is no separate propose/commit workflow. When you call `remember(importance=2)`, the memory goes directly into the archive layer and is never deleted.
 
-1. check that it describes stable facts;
-2. remove secrets and temporary logs;
-3. verify file paths and commands;
-4. keep topic files focused;
-5. avoid copying large code blocks or full diffs.
+Use `importance=2` only for stable facts you are confident in:
+
+- verify the content before saving;
+- do not save secrets, temporary logs, or guesses;
+- keep entries focused — one decision or pattern per call.
 
 ## Publishing A Fork
 

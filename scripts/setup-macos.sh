@@ -80,7 +80,7 @@ uv sync --directory "$MCP_DIR" --extra full || fail "uv sync failed. Check the e
 ok "EverMind MCP server installed"
 
 step "Running smoke test..."
-uv run --directory "$MCP_DIR" python -c "from evermind_mcp.storage import EmbeddedStorage; print('ok')" \
+uv run --directory "$MCP_DIR" python -c "from evermind_mcp.config_v2 import load_config; from evermind_mcp.storage import EmbeddedStorage; import pathlib, tempfile; tmp=tempfile.mkdtemp(); cfg=load_config(); s=EmbeddedStorage(pathlib.Path(tmp)/'test.db'); s.close_all(); print('ok')" \
   && ok "Import test passed" \
   || fail "Import test failed. Run: uv sync --directory mcp"
 
@@ -191,8 +191,16 @@ echo "  EverMind v2 is installed and configured."
 echo
 echo "  Next steps:"
 echo "  1. Restart Claude Desktop or Cursor"
-echo "  2. Open a project with a git repository"
-echo "  3. The AI will automatically detect the project and use EverMind"
+echo
+echo "  Step 2 — Add the EverMind skill to your project:"
+echo
+echo "  Add this line to your project's CLAUDE.md or AGENTS.md:"
+echo
+echo "    \$\${EVERMIND_ROOT}/skills/evermind/SKILL.md"
+echo
+echo "  This tells Claude Code when and how to use EverMind memory."
+echo
+echo "  Or copy agents/claude-code/CLAUDE.md as a starting template."
 echo
 echo "  Optional - enable vector search (much better semantic recall):"
 echo "  cd mcp && uv pip install sqlite-vec sentence-transformers"

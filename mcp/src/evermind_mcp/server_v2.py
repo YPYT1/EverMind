@@ -68,9 +68,11 @@ TOOLS: list[types.Tool] = [
     types.Tool(
         name="recall",
         description=(
-            "Search memory using hybrid BM25 + semantic search. "
-            "Automatically searches the current project space. "
-            "Returns relevant memories ranked by relevance."
+            "Search memory using hybrid BM25 + semantic search (falls back to keyword-only if vector "
+            "search not installed). Automatically searches the current project space. Returns memories "
+            "ranked by relevance. Use before starting a feature, investigating a bug, or when unsure "
+            "about a prior decision. Parameters: query (what to search), limit (max results, default 10), "
+            "mode (hybrid/fts/semantic)."
         ),
         inputSchema={
             "type": "object",
@@ -96,7 +98,11 @@ TOOLS: list[types.Tool] = [
     ),
     types.Tool(
         name="forget",
-        description="Delete a specific memory by ID.",
+        description=(
+            "Delete a specific memory by ID. Get the memory ID from the id field in recall() or "
+            "briefing() results. Use when a memory is outdated, incorrect, or should not appear in "
+            "future searches."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -112,7 +118,9 @@ TOOLS: list[types.Tool] = [
         name="briefing",
         description=(
             "Get session context: recent memories and important long-term knowledge for the "
-            "current project. Call this at the start of a coding session to restore context."
+            "current project. Call this at the start of every coding session to restore project context. "
+            "If memory_count is 0 in the response, this is a new project — explore the codebase with "
+            "evermind-code-graph and call remember() to seed initial memories."
         ),
         inputSchema={
             "type": "object",

@@ -1,23 +1,9 @@
-# Quickstart: Windows
+# Quick Start — Windows
 
-This guide sets up EverMind on Windows for a non-expert user.
+## Prerequisites
 
-## Requirements
-
-- Windows 10 or newer.
-- PowerShell 5.1 or newer.
-- Git.
-- Python 3.11 or newer.
-- `uv`.
-- Network access for first-time dependency installation.
-
-Check the basics:
-
-```powershell
-git --version
-python --version
-uv --version
-```
+- Python 3.11 or newer — https://www.python.org/downloads/
+- Git — https://git-scm.com/download/win
 
 ## 1. Clone
 
@@ -26,100 +12,68 @@ git clone https://github.com/YPYT1/EverMind.git
 cd EverMind
 ```
 
-## 2. Run Guided Setup
+## 2. Run the setup script
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\configure.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
-The guided setup:
+The script will:
+- Check Python 3.11+ and uv (offers to install uv if missing)
+- Install EverMind and all dependencies (`uv sync --extra full`)
+- Auto-configure Claude Desktop and Cursor MCP configs
+- Tell you how to add the `$evermind` skill to your project
 
-- creates local runtime folders;
-- creates `.env`;
-- renders MCP snippets into `generated\mcp-config`;
-- installs or links EverMind skills into user skill folders;
-- never overwrites existing Codex, Claude Code, Cursor, or Devin config.
+## 3. Restart Claude Desktop or Cursor
 
-For a complete bootstrap with checks:
+After setup completes, restart your AI client to load the new MCP config.
+
+## 4. Add the EverMind skill to your project
+
+In your project's `CLAUDE.md` or `AGENTS.md`, add:
+
+```markdown
+$D:\path\to\EverMind\skills\evermind\SKILL.md
+```
+
+Or copy the content of `agents/claude-code/CLAUDE.md` into your project's CLAUDE.md.
+
+## 5. Verify it works
+
+Open a project in Claude Code. Ask Claude: "Call briefing()". You should see:
+
+```json
+{"space": "coding:your-project", "memory_count": 0, ...}
+```
+
+`memory_count: 0` is normal for a new project. Claude will explore the codebase and seed initial memories automatically.
+
+## Manual Configuration
+
+If you prefer to configure manually instead of using the setup script, add this to your Claude Desktop `claude_desktop_config.json` (`%APPDATA%\Claude\claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "C:\\path\\to\\EverMind\\mcp", "evermind-mcp"]
+    }
+  }
+}
+```
+
+Replace `C:\\path\\to\\EverMind` with your actual clone path.
+
+## Enable Vector Search (optional, recommended)
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\bootstrap.ps1
+cd EverMind\mcp
+uv pip install sqlite-vec sentence-transformers
 ```
 
-If the external engines are already installed:
+Without this, EverMind uses keyword search only. With it, `recall()` uses hybrid BM25 + semantic search for significantly better results.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\install-all.ps1 -SkipToolInstall
-```
+## Troubleshooting
 
-## 3. Fill Model Keys
-
-Open `.env` and fill the model API keys:
-
-```powershell
-notepad .env
-```
-
-At minimum, configure the models your runtime requires. Keep keys local and never commit `.env`.
-
-## 4. Check The Stack
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\check-all.ps1
-```
-
-Successful checks should confirm:
-
-- `.env` exists;
-- `uv` is available;
-- MCP bridge exists;
-- skills and templates exist;
-- runtime health endpoint responds, if started;
-- EverMind Archive Engine is available;
-- EverMind Code Graph Engine is available;
-- generated MCP snippets exist.
-
-## 5. Copy MCP Config
-
-Use the generated snippet for your client:
-
-```text
-generated\mcp-config\codex.toml
-generated\mcp-config\claude-code.json
-generated\mcp-config\cursor.json
-generated\mcp-config\devin.json
-```
-
-Do not point the MCP command to an extra nested child directory. EverMind MCP lives directly under `mcp\`.
-
-## 6. Start Runtime
-
-For a terminal run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\start-everos.ps1
-```
-
-For a Windows service, use NSSM:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\install-everos-nssm.ps1 -NssmPath C:\path\to\nssm.exe -StartNow
-```
-
-MCP is normally started by the agent client. Manual startup is only for testing:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\start-mcp.ps1
-```
-
-## Default Paths
-
-```text
-<EVERMIND_ROOT>          = D:\Project\EverMind
-<EVEROS_ROOT>            = D:\EverMindMemory\everos
-<EVERMIND_ARCHIVE_ROOT>  = D:\EverMindMemory\evermind-archive
-<CODEX_CONFIG_TOML>      = %USERPROFILE%\.codex\config.toml
-```
-
-`<EVEROS_ROOT>` is runtime data. It is not the EverMind repository and not a source checkout.
-
+See [docs/troubleshooting.md](troubleshooting.md) for common issues.

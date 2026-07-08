@@ -1,92 +1,117 @@
 # Integrations
 
-EverMind supports agents through two files:
-
-1. an instruction file that teaches the agent how to use memory;
-2. an MCP snippet that starts `evermind-mcp`.
-
-Setup scripts render ready-to-copy snippets into `generated/mcp-config/`.
-
-## Codex
-
-Use:
-
-- behavior: `agents/codex/AGENTS.md`;
-- generated MCP config: `generated/mcp-config/codex.toml`;
-- template: `templates/mcp-config/codex.windows.toml` or `templates/mcp-config/codex.macos.toml`.
-
-The MCP server key is:
-
-```toml
-[mcp_servers.evermind]
-```
-
-Expected command:
-
-```text
-uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
-```
+EverMind integrates with AI coding agents via MCP and skill files.
 
 ## Claude Code
 
-Use:
+**MCP config** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
+```
 
-- behavior: `agents/claude-code/CLAUDE.md`;
-- generated MCP config: `generated/mcp-config/claude-code.json`;
-- template: `templates/mcp-config/claude-code.windows.json` or `templates/mcp-config/claude-code.macos.json`.
+**Skill** — add to your project's `CLAUDE.md`:
+```
+$~/EverMind/skills/evermind/SKILL.md
+```
 
-Claude Code should see EverMind as one MCP server named `evermind`.
+Or use the provided `agents/claude-code/CLAUDE.md` as a template.
+
+**Reference**: `agents/claude-code/`
+
+---
 
 ## Cursor
 
-Use:
+**MCP config** (`~/.cursor/mcp.json` or `%APPDATA%\Cursor\User\globalStorage\cursor.mcp\mcp.json`):
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
+```
 
-- behavior: `agents/cursor/rules.md`;
-- generated MCP config: `generated/mcp-config/cursor.json`;
-- template: `templates/mcp-config/cursor.windows.json` or `templates/mcp-config/cursor.macos.json`.
+**Rules** — add to your project's `.cursorrules` or Cursor rules:
+Reference or copy `agents/cursor/rules.md`.
 
-Cursor rules should instruct the agent to read memory before substantial code changes and to propose archive updates after meaningful work.
+**Reference**: `agents/cursor/`
+
+---
+
+## Codex
+
+**MCP config** (`.codex/config.toml`):
+```toml
+[mcp_servers.evermind]
+type = "stdio"
+command = "uv"
+args = ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+```
+
+**Agent instructions** — add to `AGENTS.md`:
+Reference or copy `agents/codex/AGENTS.md`.
+
+**Reference**: `agents/codex/`
+
+---
 
 ## Devin
 
-Use:
-
-- behavior: `agents/devin/instructions.md`;
-- generated MCP config: `generated/mcp-config/devin.json`;
-- template: `templates/mcp-config/devin.example.json`.
-
-## Skill Install Locations
-
-User setup scripts install or link EverMind skills into:
-
-```text
-~/.agents/skills
-~/.codex/skills    when ~/.codex exists
-~/.claude/skills   when ~/.claude exists
+**MCP config** — add to Devin's MCP configuration:
+```json
+{
+  "mcpServers": {
+    "evermind": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/EverMind/mcp", "evermind-mcp"]
+    }
+  }
+}
 ```
 
-On Windows, `setup-user.ps1` can copy instead of symlink:
+**Instructions** — reference `agents/devin/instructions.md`.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\setup-user.ps1 -CopyInsteadOfSymlink
+**Reference**: `agents/devin/`
+
+---
+
+## How Memory Is Saved
+
+In v2, all memory operations use the `remember()` tool:
+
+```
+remember("content", importance=0)   # temporary working note (24h)
+remember("content", importance=1)   # long-term memory
+remember("content", importance=2)   # permanent archive — never deleted
 ```
 
-## Candidate-First Archive Writes
+There is no separate propose/commit workflow. `importance=2` stores directly to the archive layer.
 
-All agent templates use candidate-first archive writes. The recommended flow is:
+Memory type (episodic / semantic / procedural / decision / bug / preference) is auto-detected from content keywords.
 
-1. start work with `briefing`;
-2. use `recall` for task-specific context;
-3. use `remember` for useful realtime facts;
-4. use `propose_basic_memory_update` after meaningful work;
-5. use `commit_basic_memory_update` only after explicit user confirmation.
+---
 
-## Placeholder Values
+## Offline Mode
 
-All config snippets may contain placeholders. See [Configuration](configuration.md) for the full reference.
+EverMind works without network access and without optional dependencies:
 
-- `<EVERMIND_ROOT>`: path to this EverMind checkout.
-- `<EVEROS_ROOT>`: runtime data root for memory, indexes, logs, and runtime config.
-- `<EVERMIND_ARCHIVE_ROOT>`: reviewed EverMind Archive Markdown archive.
-- `<CODEX_CONFIG_TOML>`: Codex config file path.
+| Mode | Requirements | Search quality |
+|------|-------------|----------------|
+| Keyword only | None (built-in FTS5) | Good for exact terms |
+| Hybrid | `uv pip install sqlite-vec sentence-transformers` | Best |
 
+Install hybrid search (recommended):
+```bash
+cd EverMind/mcp
+uv pip install sqlite-vec sentence-transformers
+```

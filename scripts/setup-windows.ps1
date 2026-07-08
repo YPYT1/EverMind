@@ -144,7 +144,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Step "Smoke-testing EverMind import..."
-$smokeResult = & uv run --directory $McpDir $PythonCmd -c "from evermind_mcp.storage import EmbeddedStorage; print('ok')" 2>&1
+$smokeResult = & uv run --directory $McpDir $PythonCmd -c "from evermind_mcp.config_v2 import load_config; from evermind_mcp.storage import EmbeddedStorage; import pathlib, tempfile; tmp=tempfile.mkdtemp(); cfg=load_config(); s=EmbeddedStorage(pathlib.Path(tmp)/'test.db'); s.close_all(); print('ok')" 2>&1
 if ($smokeResult -match "ok") {
     Write-OK "EverMind MCP server installed and importable."
 } else {
@@ -256,5 +256,14 @@ Write-Host "    - Claude Desktop config: $ClaudeConfigPath" -ForegroundColor Whi
 Write-Host "    - Cursor config: $CursorConfigPath" -ForegroundColor White
 Write-Host "    - Memory directory: $MemDir" -ForegroundColor White
 Write-Host ""
-Write-Host "  Open Claude Desktop or Cursor to start using EverMind." -ForegroundColor Cyan
+Write-Host "  Step 1 - Restart Claude Desktop or Cursor to apply changes." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Step 2 - Add the EverMind skill to your project:" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Add this line to your project's CLAUDE.md or AGENTS.md:" -ForegroundColor White
+Write-Host ""
+Write-Host "    `$`$EverMindRoot/skills/evermind/SKILL.md" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  This tells Claude Code when and how to use EverMind memory." -ForegroundColor White
+Write-Host "  Or copy agents/claude-code/CLAUDE.md as a starting template." -ForegroundColor White
 Write-Host ""
