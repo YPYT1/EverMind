@@ -12,8 +12,9 @@ EverMind is a two-component system: an MCP server that provides memory tools, an
               +-----------------------+
               |   EverMind v2 Core    |
               |                       |
-              |  briefing / remember  |
-              |  recall   / forget    |
+              | briefing / remember   |
+              | recall / forget       |
+              | list / graph / health |
               +-----------+-----------+
                           |
               +-----------v-----------+
@@ -37,14 +38,22 @@ EverMind is a two-component system: an MCP server that provides memory tools, an
 
 ### MCP Server (`mcp/src/evermind_mcp/`)
 
-The MCP server is a Python package started by the AI client via `uv run`. It exposes 4 tools:
+The MCP server is a Python package started by the AI client via `uv run`. It exposes 42 unified tools:
 
-- `briefing()` — load session context from pre-materialized cache (<5ms)
+- `briefing(fast=true)` — load session context from pre-materialized cache without blocking on LLM summary
 - `remember(content, importance)` — store to SQLite with auto type detection
-- `recall(query)` — hybrid BM25 + vector KNN search with RRF fusion
+- `update_memory(id, content, tags, meta)` — correct an existing memory and rebuild derived indexes
+- `recall(query, min_score=0.15)` — hybrid BM25 + vector KNN search with RRF fusion, optional rerank, and low-confidence filtering
 - `forget(id)` — delete a memory
+- `list(layer, tags)` — browse memories without a query
+- `graph_explore(entity)` — find memories linked to a file, class, module, or concept
+- `status()` / `health()` — inspect counts, coverage, latency, and model health
+- `export(format, layer)` / `compact(older_than_days)` — audit and summarize memory
+- `tags()` / `reindex(all_spaces)` / `list_spaces()` — maintain indexes and multi-project state
+- Codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc.) — explore code through the bundled Codebase Memory engine
+- Archive tools (`search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, etc.) — bridge reviewed Basic Memory project notes
 
-No external service. No HTTP. No API keys needed for basic use.
+No external service. No HTTP. No API keys needed for basic use; embedding, rerank, and LLM summaries are optional.
 
 ### Skills (`skills/`)
 
@@ -88,7 +97,8 @@ recall(query)
   +-- sqlite-vec KNN search (~10-20ms, if available)
   |
   +-- RRF fusion: score = 1/(60+rank_fts) + 1/(60+rank_vec)
-  +-- return top-k ranked results (<30ms total)
+  +-- optional rerank + min_score filtering
+  +-- return top-k ranked results
 ```
 
 ## 6-Layer Memory Model

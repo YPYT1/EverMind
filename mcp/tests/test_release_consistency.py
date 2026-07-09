@@ -23,15 +23,15 @@ def test_project_versions_match_repo_files():
     )
 
 
-def test_server_tool_count_is_thirteen():
+def test_server_tool_count_is_forty_two():
     repo_root = Path(__file__).resolve().parents[1]
-    assert read_tool_count(repo_root / "src" / "evermind_mcp" / "server_v2.py") == 13
+    assert read_tool_count(repo_root / "src" / "evermind_mcp" / "server_v2.py") == 42
 
 
 def test_changelog_tracks_current_release_highlights():
     repo_root = Path(__file__).resolve().parents[1]
     changelog = (repo_root / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [2.0.0]" in changelog
-    assert "13-tool EverMind MCP v2 interface" in changelog
+    assert "42-tool unified EverMind MCP v2 interface" in changelog
     assert "Qwen/Qwen3-Embedding-8B" in changelog
 

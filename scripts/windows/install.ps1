@@ -15,10 +15,10 @@ $envPath = Join-Path $ProjectRoot ".env"
 if (-not (Test-Path -LiteralPath $envPath)) {
   Copy-Item -LiteralPath (Join-Path $ProjectRoot ".env.example") -Destination $envPath
   $text = Get-Content -LiteralPath $envPath -Raw
-  $text = $text -replace "(?m)^EVERMIND_HOME=.*$", "EVERMIND_HOME=$EverMindHome"
-  $text = $text -replace "(?m)^EVEROS_ROOT=.*$", "EVEROS_ROOT=$everosRoot"
-  $text = $text -replace "(?m)^EVERMIND_ARCHIVE_ROOT=.*$", "EVERMIND_ARCHIVE_ROOT=$basicRoot"
-  $text = $text -replace "(?m)^EVERMIND_ARCHIVE_CANDIDATE_DIR=.*$", "EVERMIND_ARCHIVE_CANDIDATE_DIR=$candidateDir"
+  $text = $text -replace "(?m)^#?\s*EVERMIND_HOME=.*$", "EVERMIND_HOME=$EverMindHome"
+  $text = $text -replace "(?m)^#?\s*EVEROS_ROOT=.*$", "EVEROS_ROOT=$everosRoot"
+  $text = $text -replace "(?m)^#?\s*EVERMIND_ARCHIVE_ROOT=.*$", "EVERMIND_ARCHIVE_ROOT=$basicRoot"
+  $text = $text -replace "(?m)^#?\s*EVERMIND_ARCHIVE_CANDIDATE_DIR=.*$", "EVERMIND_ARCHIVE_CANDIDATE_DIR=$candidateDir"
   Set-Content -LiteralPath $envPath -Value $text -Encoding UTF8
 }
 

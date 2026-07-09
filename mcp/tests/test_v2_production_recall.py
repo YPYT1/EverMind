@@ -195,6 +195,46 @@ async def test_recall_rerank_timeout_is_observable_fallback(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_recall_filters_results_below_min_score(tmp_path):
+    cfg = EverMindConfig(
+        home=tmp_path,
+        default_space="coding:test",
+        embed_enabled=False,
+        rerank_enabled=False,
+        recall_min_score=0.15,
+    )
+    svc = MemoryService(cfg)
+    await svc.remember("auth first memory", importance=1)
+    await svc.remember("auth second memory", importance=1)
+
+    result = await svc.recall("auth", limit=5, min_score=0.99)
+    health = await svc.health()
+
+    assert result["results"] == []
+    assert result["count"] == 0
+    assert result["threshold_reason"] == "below_threshold"
+    assert health["last_recall_trace"]["threshold_reason"] == "below_threshold"
+
+
+@pytest.mark.asyncio
+async def test_recall_min_score_zero_disables_threshold_filter(tmp_path):
+    cfg = EverMindConfig(
+        home=tmp_path,
+        default_space="coding:test",
+        embed_enabled=False,
+        rerank_enabled=False,
+        recall_min_score=0.15,
+    )
+    svc = MemoryService(cfg)
+    await svc.remember("auth first memory", importance=1)
+
+    result = await svc.recall("auth", limit=5, min_score=0)
+
+    assert result["count"] == 1
+    assert result["threshold_reason"] is None
+
+
+@pytest.mark.asyncio
 async def test_reindex_restores_missing_fts_entries(tmp_path):
     cfg = EverMindConfig(
         home=tmp_path,
@@ -353,3 +393,57 @@ async def test_server_v2_dispatch_forget_reindex_health_list_spaces(tmp_path, mo
         assert "error" not in payload
 
     server_mod._svc = None
+
+
+@pytest.mark.asyncio
+async def test_server_v2_briefing_defaults_to_fast(tmp_path, monkeypatch):
+    import evermind_mcp.server_v2 as server_mod
+
+    cfg = EverMindConfig(
+        home=tmp_path,
+        default_space="coding:test",
+        embed_enabled=False,
+        rerank_enabled=False,
+        llm_enabled=True,
+        llm_briefing_summary=True,
+        siliconflow_api_key="sk-test",
+    )
+    svc = MemoryService(cfg)
+    called = False
+
+    def fail_if_called(memories):
+        nonlocal called
+        called = True
+        return "should not be used"
+
+    svc.llm.summarize_briefing = fail_if_called
+    server_mod._svc = svc
+    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+
+    result_text = await server_mod.call_tool("briefing", {})
+    payload = json.loads(result_text[0].text)
+
+    assert payload["fast"] is True
+    assert called is False
+    server_mod._svc = None
+
+
+@pytest.mark.asyncio
+async def test_briefing_fast_false_keeps_llm_summary_path(tmp_path):
+    cfg = EverMindConfig(
+        home=tmp_path,
+        default_space="coding:test",
+        embed_enabled=False,
+        rerank_enabled=False,
+        llm_enabled=True,
+        llm_briefing_summary=True,
+        siliconflow_api_key="sk-test",
+    )
+    svc = MemoryService(cfg)
+    await svc.remember("Decision: use role based selectors", importance=2)
+    svc.llm.summarize_briefing = lambda memories: "LLM summary"
+
+    result = await svc.briefing(fast=False)
+
+    assert result["fast"] is False
+    assert result["context_summary"] == "LLM summary"

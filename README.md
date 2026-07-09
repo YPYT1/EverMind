@@ -49,6 +49,7 @@ EverMind solves this by giving agents a reliable place to store and retrieve tha
            |                       |
            |  remember / recall    |
            |  forget  / briefing   |
+           |  codebase + archive   |
            +-----------+-----------+
                        |
            +-----------v-----------+
@@ -76,12 +77,11 @@ EverMind has two components that work together:
 
 **MCP Server** — the tools Claude Code calls directly:
 
-| Tool | What it does |
+| Tool group | What it does |
 |------|-------------|
-| `briefing()` | Load project context at session start |
-| `remember(content, importance)` | Save information to memory |
-| `recall(query)` | Search memory (keyword + semantic) |
-| `forget(id)` | Delete a specific memory |
+| Memory tools | `briefing`, `remember`, `recall`, `forget`, `graph_explore`, `status`, `health`, etc. |
+| Codebase tools | `index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc. |
+| Archive tools | `search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, `commit_basic_memory_update`, etc. |
 
 **Skills** — instruction files that tell Claude *when* and *how* to use the tools:
 
@@ -129,21 +129,19 @@ bash scripts/setup-macos.sh
 
 The script checks Python 3.11+, installs uv if missing, syncs dependencies, and auto-configures Claude Desktop and Cursor.
 
-### About evermind-code-graph
+### Codebase and archive engines
 
-EverMind's session start protocol uses `evermind-code-graph` to explore the codebase when opening a new project. This is a **separate optional tool** not included in this repository.
+EverMind exposes 42 tools through the same `evermind` MCP server. `scripts/windows/install-all.ps1` and `scripts/macos/install-all.sh` install `codebase-memory-mcp v0.9.0` and `basic-memory v0.22.1` as internal engines; clients still register only EverMind.
 
-**If you have evermind-code-graph installed:** the new-project initialization runs automatically as described.
-
-**If you don't have evermind-code-graph:** use this fallback for new project initialization:
+For new projects, run `index_repository`, then `get_architecture`/`search_code`, then save verified findings:
 
 ```
-remember("Tech stack: <manually describe languages, frameworks, databases>", importance=1)
-remember("Entry point: <main file> — run with: <command>", importance=1)
-remember("Key structure: <brief description of main folders and their purpose>", importance=1)
+remember("Tech stack: ...", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
+remember("Entry point: ...", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
+remember("Key structure: ...", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
 ```
 
-You can gather this information by reading the README, package.json/pyproject.toml/Cargo.toml, and main entry files yourself.
+Verified negative facts can outrank older unverified memories and produce `forget_suggestions` when conflicts are detected.
 
 ---
 
@@ -178,6 +176,7 @@ Without these, EverMind uses FTS5 keyword search. With them, `recall()` runs hyb
 | Tool | Purpose |
 |------|---------|
 | `remember(content, importance, tags)` | Save to memory. importance: 0 = working (24h), 1 = long-term, 2 = permanent |
+| `update_memory(id, content, tags, meta)` | Correct an existing memory without deleting it; rebuilds search, embeddings, graph links, and briefing cache |
 | `recall(query, limit, mode)` | Hybrid BM25 + semantic search. Auto-detects project from git |
 | `forget(id)` | Delete a memory by ID |
 | `briefing()` | Load session context: recent + important memories for this project |

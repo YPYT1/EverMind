@@ -86,9 +86,16 @@ uv run --directory "$MCP_DIR" python -c "from evermind_mcp.config_v2 import load
 
 # ─── Section 3: Detect Config Paths ──────────────────────────────────────────
 
-header "Detecting Platform Config Paths"
+header "Installing Integrated Code Graph and Archive Engines"
 
 EVERMIND_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+bash "$EVERMIND_ROOT/scripts/macos/install-all.sh"
+ok "Integrated engines installed. Users still register only the evermind MCP server."
+
+# ─── Section 4: Detect Config Paths ──────────────────────────────────────────
+
+header "Detecting Platform Config Paths"
+
 CLAUDE_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 CURSOR_CONFIG_1="$HOME/Library/Application Support/Cursor/User/globalStorage/cursor.mcp/mcp.json"
 CURSOR_CONFIG_2="$HOME/.cursor/mcp.json"

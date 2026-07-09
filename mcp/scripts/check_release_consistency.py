@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 INIT_PATH = REPO_ROOT / "src" / "evermind_mcp" / "__init__.py"
 SERVER_PATH = REPO_ROOT / "src" / "evermind_mcp" / "server_v2.py"
-EXPECTED_TOOL_COUNT = 13
+EXPECTED_TOOL_COUNT = 42
 
 
 def read_project_version(pyproject_path: Path = PYPROJECT_PATH) -> str:
@@ -28,15 +28,27 @@ def read_init_version(init_path: Path = INIT_PATH) -> str:
 
 
 def read_tool_count(server_path: Path = SERVER_PATH) -> int:
-    content = server_path.read_text(encoding="utf-8")
-    match = re.search(
-        r"TOOLS:\s*list\[types\.Tool\]\s*=\s*\[(?P<body>.*)\n\]",
-        content,
-        re.DOTALL,
-    )
-    if not match:
-        raise ValueError(f"Could not parse TOOLS list from {server_path}")
-    return match.group("body").count("types.Tool(")
+    import importlib.util
+    import sys
+
+    src_root = server_path.parents[2]
+    sys.path.insert(0, str(src_root))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "evermind_mcp.server_v2",
+            server_path,
+        )
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Could not import {server_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["evermind_mcp.server_v2"] = module
+        spec.loader.exec_module(module)
+        return len(module.TOOLS)
+    finally:
+        try:
+            sys.path.remove(str(src_root))
+        except ValueError:
+            pass
 
 
 def run_checks() -> list[str]:
@@ -55,7 +67,7 @@ def run_checks() -> list[str]:
         )
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for required in ["EverMind MCP", "evermind-mcp", "13 tools"]:
+    for required in ["EverMind MCP", "evermind-mcp", "42 tools"]:
         if required not in readme:
             errors.append(f"Missing '{required}' in README.md")
     for forbidden in ["tt-a1i", "uvx evermind-mcp@latest"]:

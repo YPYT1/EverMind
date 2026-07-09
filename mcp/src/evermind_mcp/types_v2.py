@@ -34,7 +34,9 @@ class MemoryRow:
             "role": self.role,
             "importance": self.importance,
             "tags": self.tags,
+            "meta": self.meta,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "score": round(self.score, 4),
         }
 

@@ -1,6 +1,6 @@
 # Write Policy
 
-EverMind v2 uses a single `remember()` call with an `importance` parameter to control persistence. There is no separate propose/commit flow.
+EverMind v2 uses `remember()` with an `importance` parameter to create memories, and `update_memory()` to correct existing memories by ID. There is no separate propose/commit flow.
 
 ## Levels
 
@@ -40,6 +40,10 @@ Never use `remember()` for:
 - API keys, tokens, passwords, private keys, cookies, session credentials
 - Personal data or PII
 - Content that could change and become misleading (verify before saving)
+
+## Correcting Existing Memories
+
+Use `update_memory(id, content=...)` when a stored memory is wrong but should keep the same ID and history. Use `forget(id)` only when the memory should disappear entirely.
 
 ## Searching by Layer
 

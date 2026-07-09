@@ -124,9 +124,12 @@ uv pip install sqlite-vec sentence-transformers
 
 ## MCPツール
 
+EverMind は同じ `evermind` MCP サーバーから 42 個のツールを公開します：14 個のメモリツール、14 個のコードグラフツール、14 個の Basic Memory アーカイブツール。
+
 | ツール | 目的 |
 |--------|------|
 | `remember(content, importance, tags)` | メモリに保存。importance: 0 = 作業(24h), 1 = 長期, 2 = 永久 |
+| `update_memory(id, content, tags, meta)` | 誤ったメモリを同じ ID のまま修正し、検索・embedding・グラフ・briefing キャッシュを再構築 |
 | `recall(query, limit, mode)` | ハイブリッドBM25 + 意味検索。gitからプロジェクトを自動検出 |
 | `forget(id)` | IDでメモリを削除 |
 | `briefing()` | セッションコンテキストをロード：このプロジェクトの最近の重要なメモリ |

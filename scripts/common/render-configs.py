@@ -12,7 +12,7 @@ def replace_line(text: str, key: str, value: str) -> str:
     rendered = []
     found = False
     for line in lines:
-        if line.startswith(f"{key}="):
+        if line.startswith(f"{key}=") or line.startswith(f"# {key}="):
             rendered.append(f"{key}={value}")
             found = True
         else:

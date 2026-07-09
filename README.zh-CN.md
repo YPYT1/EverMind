@@ -78,10 +78,9 @@ EverMind 由两个协同工作的组件组成：
 
 | 工具 | 功能 |
 |------|------|
-| `briefing()` | 会话开始时加载项目上下文 |
-| `remember(content, importance)` | 保存信息到记忆 |
-| `recall(query)` | 搜索记忆（关键词 + 语义） |
-| `forget(id)` | 删除指定记忆 |
+| Memory 工具 | `briefing`, `remember`, `update_memory`, `recall`, `forget`, `graph_explore`, `status`, `health` 等 |
+| Codebase 工具 | `index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path` 等 |
+| Archive 工具 | `search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, `commit_basic_memory_update` 等 |
 
 **Skills（技能）** — 告诉 Claude 何时以及如何使用工具的指令文件：
 
@@ -151,9 +150,12 @@ uv pip install sqlite-vec sentence-transformers
 
 ## MCP 工具
 
+EverMind 通过同一个 `evermind` MCP 服务器暴露 42 个工具：14 个记忆工具、14 个代码图谱工具、14 个 Basic Memory 归档工具。
+
 | 工具 | 说明 |
 |------|------|
 | `remember(content, importance, tags)` | 保存记忆。importance: 0=工作(24h), 1=长期, 2=永久 |
+| `update_memory(id, content, tags, meta)` | 原地修正错误记忆；同步重建搜索、embedding、图谱和 briefing 缓存 |
 | `recall(query, limit, mode)` | 混合搜索：BM25+语义，自动从 git 检测项目空间 |
 | `forget(id)` | 按 ID 删除记忆 |
 | `briefing()` | 加载会话上下文：当前项目的最近和重要记忆 |

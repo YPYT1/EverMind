@@ -46,6 +46,8 @@ Use `importance=2` only for stable facts you are confident in:
 - do not save secrets, temporary logs, or guesses;
 - keep entries focused — one decision or pattern per call.
 
+If an archive memory is later found to be wrong, correct it with `update_memory(id, content=...)` after re-verifying the fact.
+
 ## Publishing A Fork
 
 Before publishing a fork:

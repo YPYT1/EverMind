@@ -23,8 +23,8 @@ function Set-EnvLine {
   )
   if ([string]::IsNullOrWhiteSpace($Value)) { return }
   $text = Get-Content -LiteralPath $EnvPath -Raw
-  if ($text -match "(?m)^$Name=.*$") {
-    $text = $text -replace "(?m)^$Name=.*$", "$Name=$Value"
+  if ($text -match "(?m)^#?\s*$Name=.*$") {
+    $text = $text -replace "(?m)^#?\s*$Name=.*$", "$Name=$Value"
   } else {
     $text = $text.TrimEnd() + "`n$Name=$Value`n"
   }

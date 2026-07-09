@@ -10,7 +10,7 @@ function Info($msg) { Write-Host "[EverMind] $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 
 $archiveEngineVersion = "0.22.1"
-$codeGraphEngineVersion = "v0.8.1"
+$codeGraphEngineVersion = "v0.9.0"
 
 function Render-File {
   param(
@@ -53,7 +53,7 @@ $codebaseExe = Get-ChildItem -LiteralPath $codebaseRoot -Recurse -File -Filter "
 if ($codebaseExe) {
   $envPath = Join-Path $ProjectRoot ".env"
   $text = Get-Content -LiteralPath $envPath -Raw
-  $text = $text -replace "(?m)^EVERMIND_CODEBASE_MEMORY_PATH=.*$", "EVERMIND_CODEBASE_MEMORY_PATH=$($codebaseExe.FullName)"
+  $text = $text -replace "(?m)^#?\s*EVERMIND_CODEBASE_MEMORY_PATH=.*$", "EVERMIND_CODEBASE_MEMORY_PATH=$($codebaseExe.FullName)"
   Set-Content -LiteralPath $envPath -Value $text -Encoding UTF8
 } else {
   Warn "EverMind Code Graph executable was not found under $codebaseRoot. check-all will report this until installed."

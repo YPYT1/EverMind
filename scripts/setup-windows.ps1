@@ -152,7 +152,19 @@ if ($smokeResult -match "ok") {
 }
 
 # ---------------------------------------------------------------------------
-# SECTION 3: Detect Config Paths
+# SECTION 3: Install integrated engines
+# ---------------------------------------------------------------------------
+
+Write-Header "Installing Integrated Code Graph and Archive Engines"
+
+& (Join-Path $EverMindRoot "scripts\windows\install-all.ps1") -ProjectRoot $EverMindRoot -EverMindHome "$env:USERPROFILE\.evermind"
+if ($LASTEXITCODE -ne 0) {
+    Write-FAIL "Integrated engine installation failed."
+}
+Write-OK "Integrated engines installed. Users still register only the evermind MCP server."
+
+# ---------------------------------------------------------------------------
+# SECTION 4: Detect Config Paths
 # ---------------------------------------------------------------------------
 
 Write-Header "Detecting Platform Config Paths"
@@ -180,7 +192,7 @@ $McpEntry = @{
 }
 
 # ---------------------------------------------------------------------------
-# SECTION 4: Configure Claude Desktop and Cursor
+# SECTION 5: Configure Claude Desktop and Cursor
 # ---------------------------------------------------------------------------
 
 Write-Header "Claude Desktop Configuration"
@@ -231,7 +243,7 @@ Update-McpConfig -ConfigPath $ClaudeConfigPath -AppName "Claude Desktop"
 Update-McpConfig -ConfigPath $CursorConfigPath  -AppName "Cursor"
 
 # ---------------------------------------------------------------------------
-# SECTION 5: Memory Directory
+# SECTION 6: Memory Directory
 # ---------------------------------------------------------------------------
 
 $MemDir = "$env:USERPROFILE\.evermind"
@@ -239,7 +251,7 @@ New-Item -ItemType Directory -Force -Path $MemDir | Out-Null
 Write-OK "Memory directory ready: $MemDir"
 
 # ---------------------------------------------------------------------------
-# SECTION 6: Summary
+# SECTION 7: Summary
 # ---------------------------------------------------------------------------
 
 Write-Header "Setup Complete"
@@ -252,6 +264,7 @@ Write-Host "    - git: presence checked (optional)" -ForegroundColor White
 Write-Host "    - sentence-transformers: availability checked" -ForegroundColor White
 Write-Host "    - sqlite-vec: availability checked" -ForegroundColor White
 Write-Host "    - EverMind MCP server: dependencies synced and smoke-tested" -ForegroundColor White
+Write-Host "    - Integrated engines: code graph and archive installed/configured" -ForegroundColor White
 Write-Host "    - Claude Desktop config: $ClaudeConfigPath" -ForegroundColor White
 Write-Host "    - Cursor config: $CursorConfigPath" -ForegroundColor White
 Write-Host "    - Memory directory: $MemDir" -ForegroundColor White

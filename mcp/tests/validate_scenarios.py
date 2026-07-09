@@ -261,6 +261,7 @@ def test_mcp_tools():
     tool_names = {t.name for t in server_mod.TOOLS}
     required = {
         "remember",
+        "update_memory",
         "recall",
         "forget",
         "briefing",
@@ -273,13 +274,30 @@ def test_mcp_tools():
         "reindex",
         "health",
         "list_spaces",
+        "index_repository",
+        "search_code",
+        "search_graph",
+        "trace_path",
+        "get_architecture",
+        "search_notes",
+        "read_note",
+        "write_note",
+        "propose_basic_memory_update",
+        "commit_basic_memory_update",
     }
     missing = required - tool_names
     assert not missing, f"Missing MCP tools: {missing}"
+    assert len(tool_names) == 42, f"Expected 42 unified MCP tools, got {len(tool_names)}"
     for tool in server_mod.TOOLS:
         assert tool.description, f"Tool {tool.name} missing description"
         assert tool.inputSchema,  f"Tool {tool.name} missing inputSchema"
-    ok("Scenario 11 — MCP tools: all 13 tools registered with description and schema")
+    recall_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "recall")
+    briefing_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "briefing")
+    update_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "update_memory")
+    assert "min_score" in recall_schema["properties"], "recall must expose min_score"
+    assert "fast" in briefing_schema["properties"], "briefing must expose fast"
+    assert "content" in update_schema["properties"], "update_memory must expose content"
+    ok("Scenario 11 — MCP tools: all 42 unified tools registered with description and schema")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -319,10 +337,20 @@ def test_single_install_command():
 
     win_script = (scripts_dir / "setup-windows.ps1").read_text(encoding="utf-8")
     mac_script = (scripts_dir / "setup-macos.sh").read_text(encoding="utf-8")
+    win_all_script = (scripts_dir / "windows" / "install-all.ps1").read_text(encoding="utf-8")
+    mac_all_script = (scripts_dir / "macos" / "install-all.sh").read_text(encoding="utf-8")
+    native_codebase = (mcp_dir / "src" / "evermind_mcp" / "native_codebase.py").read_text(encoding="utf-8")
+    codebase_engine = (mcp_dir / "src" / "evermind_mcp" / "codebase_engine.py").read_text(encoding="utf-8")
     assert "--extra full" in win_script, "setup-windows.ps1 must use --extra full"
     assert "--extra full" in mac_script, "setup-macos.sh must use --extra full"
+    assert "install-all.ps1" in win_script, "setup-windows.ps1 must install integrated engines"
+    assert "install-all.sh" in mac_script, "setup-macos.sh must install integrated engines"
+    assert "v0.9.0" in win_all_script, "Windows install-all must install codebase-memory-mcp v0.9.0"
+    assert "v0.9.0" in mac_all_script, "macOS install-all must install codebase-memory-mcp v0.9.0"
+    assert "class NativeCodebase" in native_codebase, "EverMind must provide native codebase fallback"
+    assert "NativeCodebase(self.config).call" in codebase_engine, "CodebaseEngine must fallback when binary is missing"
 
-    ok("Scenario 13 — single install: 'uv sync --extra full' installs ALL tools at once")
+    ok("Scenario 13 — single install: EverMind installs or natively provides memory, codebase, and archive engines")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

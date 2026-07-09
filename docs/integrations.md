@@ -87,12 +87,13 @@ Reference or copy `agents/codex/AGENTS.md`.
 
 ## How Memory Is Saved
 
-In v2, all memory operations use the `remember()` tool:
+In v2, create memories with `remember()` and correct existing memories with `update_memory()`:
 
 ```
 remember("content", importance=0)   # temporary working note (24h)
 remember("content", importance=1)   # long-term memory
 remember("content", importance=2)   # permanent archive — never deleted
+update_memory({"id":"...", "content":"corrected content"})  # fix a wrong memory in place
 ```
 
 There is no separate propose/commit workflow. `importance=2` stores directly to the archive layer.

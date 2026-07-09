@@ -6,6 +6,7 @@ that delegates storage, embedding, and type concerns to dedicated modules.
 """
 
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -16,6 +17,8 @@ from .reranker import RerankerManager
 from .llm import LLMManager
 from .config_v2 import EverMindConfig
 from .content_guard import scan_sensitive_content
+from .archive_bridge import ArchiveBridge
+from .codebase_engine import CodebaseEngine
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,34 @@ RRF_K = 60
 # Dedup similarity threshold
 DEDUP_THRESHOLD = 0.3
 DEDUP_MERGE_THRESHOLD = 0.5
+
+VERIFIED_TAGS = {"codebase-verified", "verified"}
+NEGATION_PATTERNS = (
+    "不存在",
+    "没有",
+    "无 ",
+    "无此",
+    "not exist",
+    "does not exist",
+    "no ",
+    "missing",
+)
+AFFIRMATION_PATTERNS = (
+    "存在",
+    "在 ",
+    "位于",
+    "管理",
+    "manages",
+    "uses",
+    "use ",
+    "exposes",
+    "contains",
+    "存在于",
+)
+ENTITY_PATTERN = re.compile(
+    r"[\w./\\-]+\.(?:py|ts|tsx|js|jsx|cts|mts|vue|go|rs|java|cs|cpp|c|h|md|json|toml|yaml|yml)|"
+    r"\b[A-Z][A-Za-z0-9_]{2,}\b"
+)
 
 
 def _detect_memory_type(content: str, importance: int) -> str:
@@ -132,6 +163,8 @@ class MemoryService:
             timeout_seconds=config.api_timeout_seconds,
         )
         self.space = config.default_space
+        self.codebase = CodebaseEngine(config)
+        self.archive = ArchiveBridge(config)
         self._last_recall_latency_ms: float | None = None
         self._recall_latencies: deque[float] = deque(maxlen=200)
         self._last_recall_trace: dict = {}
@@ -187,6 +220,7 @@ class MemoryService:
         tags: list = [],
         memory_type: str = "auto",
         role: str = "user",
+        meta: dict | None = None,
     ) -> dict:
         """
         Store a memory, with automatic type detection, layer assignment,
@@ -260,6 +294,8 @@ class MemoryService:
                             return {"id": candidate.id, "action": "merged", "layer": candidate.layer, "type": candidate.memory_type, "similar_merged": True, "similarity": round(sim, 4)}
 
         # Insert new memory
+        meta = dict(meta or {})
+        conflicts = self._detect_conflicts(content, tags or [], meta)
         memory = self.storage.insert_memory(
             content=content,
             space=space,
@@ -268,6 +304,7 @@ class MemoryService:
             importance=importance,
             tags=tags,
             role=role,
+            meta=meta,
         )
 
         # Enqueue background embedding
@@ -294,6 +331,7 @@ class MemoryService:
             "layer": layer,
             "type": memory_type,
             "similar_merged": False,
+            "conflicts": conflicts,
         }
 
     async def recall(
@@ -305,6 +343,7 @@ class MemoryService:
         layer: str = None,
         tags: list = None,
         all_spaces: bool = False,
+        min_score: float | None = None,
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
@@ -313,6 +352,7 @@ class MemoryService:
         started = time.perf_counter()
         if space is None:
             space = self.space
+        effective_min_score = self.config.recall_min_score if min_score is None else min_score
 
         candidate_limit = max(
             limit * 2,
@@ -331,6 +371,11 @@ class MemoryService:
             )
             if rerank_applied:
                 mode_used = "fts+rerank"
+            threshold_min_score = effective_min_score if min_score is not None or rerank_applied else None
+            final_list, threshold_reason = self._filter_by_min_score(
+                final_list,
+                threshold_min_score,
+            )
             latency_ms = round((time.perf_counter() - started) * 1000, 3)
             self._record_recall_trace(
                 space,
@@ -344,16 +389,23 @@ class MemoryService:
                 rerank_fallback,
                 latency_ms,
                 all_spaces=True,
+                min_score=threshold_min_score,
+                threshold_reason=threshold_reason,
             )
+            results, conflicts = self._prepare_results(final_list, query=query)
             return {
-                "results": [m.to_dict() for m in final_list],
-                "mode": mode_used,
+                "results": results,
                 "count": len(final_list),
+                "mode": mode_used,
                 "query": query,
                 "all_spaces": True,
                 "latency_ms": latency_ms,
                 "rerank_applied": rerank_applied,
                 "rerank_fallback_reason": rerank_fallback,
+                "min_score": threshold_min_score,
+                "threshold_reason": threshold_reason,
+                "conflicts": conflicts,
+                "forget_suggestions": self._forget_suggestions(conflicts),
             }
 
         # Quick working-memory expiry
@@ -368,6 +420,14 @@ class MemoryService:
         # Full-text search
         if mode in ("hybrid", "fts"):
             fts_results = self.storage.search_fts(query, space, limit=candidate_limit, layer=layer, tags=tags)
+            if not fts_results:
+                fts_results = self._search_entity_fallbacks(
+                    query,
+                    space,
+                    candidate_limit,
+                    layer=layer,
+                    tags=tags,
+                )
 
         # Semantic / vector search
         if mode in ("hybrid", "semantic"):
@@ -426,6 +486,7 @@ class MemoryService:
                 False,
                 "no_candidates",
                 latency_ms,
+                min_score=effective_min_score if min_score is not None else None,
             )
             return {
                 "results": [],
@@ -435,6 +496,8 @@ class MemoryService:
                 "latency_ms": latency_ms,
                 "rerank_applied": False,
                 "rerank_fallback_reason": "no_candidates",
+                "min_score": effective_min_score if min_score is not None else None,
+                "threshold_reason": None,
             }
 
         final_list, rerank_applied, rerank_fallback = self._rerank_if_available(
@@ -446,6 +509,11 @@ class MemoryService:
             final_list = final_list[:limit]
         else:
             mode_used = f"{mode_used}+rerank"
+        threshold_min_score = effective_min_score if min_score is not None or rerank_applied else None
+        final_list, threshold_reason = self._filter_by_min_score(
+            final_list,
+            threshold_min_score,
+        )
 
         latency_ms = round((time.perf_counter() - started) * 1000, 3)
         self._record_recall_trace(
@@ -459,17 +527,24 @@ class MemoryService:
             rerank_applied,
             rerank_fallback,
             latency_ms,
+            min_score=threshold_min_score,
+            threshold_reason=threshold_reason,
         )
+        results, conflicts = self._prepare_results(final_list, query=query)
         return {
-            "results": [m.to_dict() for m in final_list],
+            "results": results,
             "mode": mode_used,
             "count": len(final_list),
             "query": query,
             "latency_ms": latency_ms,
             "rerank_applied": rerank_applied,
             "rerank_fallback_reason": rerank_fallback,
+            "min_score": threshold_min_score,
+            "threshold_reason": threshold_reason,
             "fts_candidates": len(fts_results),
             "vec_candidates": len(vec_results),
+            "conflicts": conflicts,
+            "forget_suggestions": self._forget_suggestions(conflicts),
         }
 
     async def list_memories(
@@ -488,6 +563,114 @@ class MemoryService:
             "filter": {"layer": layer, "tags": tags},
         }
 
+    async def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        importance: int | None = None,
+        tags: list | None = None,
+        memory_type: str | None = None,
+        meta: dict | None = None,
+    ) -> dict:
+        """Update a memory by ID and rebuild derived indexes as needed."""
+        existing = self.storage.get_memory(memory_id)
+        if existing is None:
+            return {"updated": False, "id": memory_id, "error": "not found"}
+
+        if (
+            content is None
+            and importance is None
+            and tags is None
+            and memory_type is None
+            and meta is None
+        ):
+            return {"updated": False, "id": memory_id, "error": "no fields to update"}
+
+        new_content = existing.content if content is None else content
+        content_changed = new_content != existing.content
+        new_importance = existing.importance if importance is None else importance
+        requested_type = "auto" if memory_type is None and content_changed else (existing.memory_type if memory_type is None else memory_type)
+        new_type = (
+            _detect_memory_type(new_content, new_importance)
+            if requested_type == "auto"
+            else requested_type
+        )
+        new_layer = _assign_layer(new_importance, new_type)
+        new_tags = existing.tags if tags is None else tags
+        new_meta = existing.meta if meta is None else dict(meta)
+
+        if content_changed and self.config.sensitive_memory_block:
+            sensitive_matches = scan_sensitive_content(new_content)
+            if sensitive_matches:
+                self.storage.log_event(
+                    existing.space,
+                    "update_memory_rejected",
+                    memory_id,
+                    {
+                        "reason": "sensitive_content",
+                        "categories": sorted({m.category for m in sensitive_matches}),
+                    },
+                )
+                return {
+                    "updated": False,
+                    "id": memory_id,
+                    "error": "sensitive_content",
+                    "sensitive_matches": [
+                        {
+                            "category": m.category,
+                            "matched_text": m.matched_text,
+                            "description": m.description,
+                        }
+                        for m in sensitive_matches
+                    ],
+                }
+
+        updated = self.storage.update_memory(
+            memory_id,
+            content=new_content,
+            layer=new_layer,
+            memory_type=new_type,
+            importance=new_importance,
+            tags=new_tags,
+            meta=new_meta,
+        )
+        if updated is None:
+            return {"updated": False, "id": memory_id, "error": "not found"}
+
+        if content_changed:
+            self.embedder.enqueue(updated.id, updated.content)
+            if self.config.graph_enabled:
+                entities = self.storage.extract_entities_from_content(updated.content)
+                if entities:
+                    self.storage.link_memory_to_entities(updated.id, updated.space, entities)
+
+        conflicts = self._detect_conflicts(updated.content, updated.tags, updated.meta)
+        self.storage.log_event(
+            updated.space,
+            "memory_updated",
+            updated.id,
+            {
+                "content_changed": content_changed,
+                "importance": updated.importance,
+                "layer": updated.layer,
+                "type": updated.memory_type,
+            },
+        )
+        self._signal_briefing_refresh()
+        return {
+            "updated": True,
+            "id": updated.id,
+            "action": "updated",
+            "layer": updated.layer,
+            "type": updated.memory_type,
+            "importance": updated.importance,
+            "tags": updated.tags,
+            "meta": updated.meta,
+            "content_changed": content_changed,
+            "conflicts": conflicts,
+            "forget_suggestions": self._forget_suggestions(conflicts),
+        }
+
     async def forget(self, memory_id: str) -> dict:
         """Permanently delete a memory by ID."""
         deleted = self.storage.delete_memory(memory_id)
@@ -497,7 +680,7 @@ class MemoryService:
             return {"deleted": True, "id": memory_id}
         return {"deleted": False, "id": memory_id, "error": "not found"}
 
-    async def briefing(self) -> dict:
+    async def briefing(self, fast: bool = False) -> dict:
         """
         Return a structured briefing of the current memory state.
         Uses a 5-minute cache; refreshes when stale.
@@ -516,10 +699,11 @@ class MemoryService:
 
         data = cache.to_dict()
         memories_for_summary = data.get("important", []) + data.get("recent", [])
-        if self.config.llm_briefing_summary:
+        if self.config.llm_briefing_summary and not fast:
             summary = self.llm.summarize_briefing(memories_for_summary)
             if summary:
                 data["context_summary"] = summary
+        data["fast"] = fast
         data["warnings"] = [
             m for m in memories_for_summary
             if (m.get("memory_type") or m.get("type")) == TYPE_BUG
@@ -534,10 +718,18 @@ class MemoryService:
         """Explore graph relationships for a given entity."""
         space = self.space
         results = self.storage.search_graph(space, entity, limit=10)
+        memories = []
+        for item in results:
+            memory = item.get("memory") if isinstance(item, dict) else None
+            if isinstance(memory, dict):
+                memories.append(memory)
+        conflicts = self._detect_conflicts_in_dicts(memories, query=entity)
         return {
             "entity": entity,
             "related_memories": results,
             "count": len(results),
+            "conflicts": conflicts,
+            "forget_suggestions": self._forget_suggestions(conflicts),
         }
 
     async def status(self) -> dict:
@@ -582,6 +774,11 @@ class MemoryService:
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
+            "codebase_engine_available": self.codebase.executable is not None,
+            "codebase_engine_path": self.codebase.executable,
+            "archive_engine_available": self.archive.executable is not None,
+            "archive_engine_path": self.archive.executable,
+            "archive_root": str(self.config.archive_root),
             "rerank_last_applied": self.reranker.last_applied,
             "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
             "rerank_last_latency_ms": self.reranker.last_latency_ms,
@@ -681,6 +878,9 @@ class MemoryService:
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
+            "codebase_engine_available": self.codebase.executable is not None,
+            "archive_engine_available": self.archive.executable is not None,
+            "archive_root": str(self.config.archive_root),
             "rerank_last_applied": self.reranker.last_applied,
             "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
             "rerank_last_latency_ms": self.reranker.last_latency_ms,
@@ -750,6 +950,8 @@ class MemoryService:
         latency_ms: float,
         *,
         all_spaces: bool = False,
+        min_score: float | None = None,
+        threshold_reason: str | None = None,
     ) -> None:
         self._last_recall_latency_ms = latency_ms
         self._recall_latencies.append(latency_ms)
@@ -765,6 +967,8 @@ class MemoryService:
             "rerank_scores": self.reranker.last_scores[:10],
             "latency_ms": latency_ms,
             "all_spaces": all_spaces,
+            "min_score": min_score,
+            "threshold_reason": threshold_reason,
         }
         self._last_recall_trace = trace
         self.storage.log_event(space, "recall_result", None, trace)
@@ -794,12 +998,196 @@ class MemoryService:
         if not candidates:
             return [], False, "no_candidates"
         if not self.reranker.available:
-            return candidates[:limit], False, "unavailable"
-        reranked = self.reranker.rerank(query, candidates, top_k=limit)
+            return self._prioritize_verified_conflicts(candidates, query)[:limit], False, "unavailable"
+        top_k = min(len(candidates), max(limit, limit + 5))
+        reranked = self.reranker.rerank(query, candidates, top_k=top_k)
+        reranked = self._prioritize_verified_conflicts(reranked, query)
         if getattr(self.reranker, "last_applied", True):
-            return reranked, True, None
+            return reranked[:limit], True, None
         return reranked[:limit], False, getattr(
             self.reranker,
             "last_fallback_reason",
             "unknown",
         )
+
+    @staticmethod
+    def _filter_by_min_score(memories: list, min_score: float | None) -> tuple[list, str | None]:
+        if min_score is None or min_score <= 0:
+            return memories, None
+        filtered = [memory for memory in memories if memory.score >= min_score]
+        if memories and not filtered:
+            return [], "below_threshold"
+        if len(filtered) < len(memories):
+            return filtered, "partial_below_threshold"
+        return filtered, None
+
+    def _search_entity_fallbacks(
+        self,
+        query: str,
+        space: str,
+        limit: int,
+        *,
+        layer: str | None = None,
+        tags: list | None = None,
+    ) -> list:
+        candidates = []
+        seen: set[str] = set()
+        tokens = [token for token in re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", query) if len(token) >= 4]
+        for token in tokens:
+            for memory in self.storage.search_fts(token, space, limit=limit, layer=layer, tags=tags):
+                if memory.id in seen:
+                    continue
+                seen.add(memory.id)
+                candidates.append(memory)
+        return candidates[:limit]
+
+    def _prepare_results(self, memories: list, *, query: str) -> tuple[list[dict], list[dict]]:
+        ordered = self._prioritize_verified_conflicts(memories, query)
+        results = [memory.to_dict() for memory in ordered]
+        for result, memory in zip(results, ordered, strict=False):
+            result["verified"] = self._is_verified(memory.to_dict())
+            result["conflict_role"] = self._fact_polarity(memory.content)
+        conflicts = self._detect_conflicts_in_dicts(results, query=query)
+        return results, conflicts
+
+    def _prioritize_verified_conflicts(self, memories: list, query: str) -> list:
+        conflict_entities = self._conflict_entities([m.to_dict() for m in memories], query)
+
+        def priority(memory) -> tuple:
+            data = memory.to_dict()
+            entity_hit = bool(conflict_entities & _entities(data.get("content", "")))
+            verified = self._is_verified(data)
+            polarity = self._fact_polarity(data.get("content", ""))
+            verified_negative = verified and polarity == "negative" and entity_hit
+            return (
+                1 if verified_negative else 0,
+                1 if verified and entity_hit else 0,
+                memory.importance,
+                memory.score,
+                memory.updated_at,
+            )
+
+        return sorted(memories, key=priority, reverse=True)
+
+    def _detect_conflicts(self, content: str, tags: list, meta: dict) -> list[dict]:
+        entities = _entities(content)
+        polarity = self._fact_polarity(content)
+        if not entities or polarity == "unknown":
+            return []
+        rows = []
+        for entity in entities:
+            for item in self.storage.search_graph(self.space, entity, limit=10):
+                memory = item.get("memory") if isinstance(item, dict) else None
+                if isinstance(memory, dict):
+                    rows.append(memory)
+        new_memory = {
+            "id": None,
+            "content": content,
+            "tags": tags,
+            "meta": meta,
+            "importance": 0,
+            "score": 0,
+        }
+        return self._detect_conflicts_in_dicts([new_memory, *rows], query=content)
+
+    def _detect_conflicts_in_dicts(self, memories: list[dict], *, query: str) -> list[dict]:
+        conflicts = []
+        seen: set[tuple[str, str]] = set()
+        for entity in self._conflict_entities(memories, query):
+            negative = []
+            positive = []
+            for memory in memories:
+                content = memory.get("content", "")
+                if entity not in _entities(content):
+                    continue
+                polarity = self._fact_polarity(content)
+                if polarity == "negative":
+                    negative.append(memory)
+                elif polarity == "positive":
+                    positive.append(memory)
+            if not negative or not positive:
+                continue
+            pair_key = (entity, ",".join(sorted(str(m.get("id")) for m in negative + positive)))
+            if pair_key in seen:
+                continue
+            seen.add(pair_key)
+            conflicts.append(
+                {
+                    "entity": entity,
+                    "type": "code_fact_contradiction",
+                    "negative": [_conflict_item(item) for item in negative],
+                    "positive": [_conflict_item(item) for item in positive],
+                    "verified_negative": any(self._is_verified(item) for item in negative),
+                    "suggestion": "Prefer codebase-verified negative facts; review and forget stale positive memories.",
+                }
+            )
+        return conflicts
+
+    def _conflict_entities(self, memories: list[dict], query: str) -> set[str]:
+        entity_to_polarities: dict[str, set[str]] = {}
+        for memory in memories:
+            content = memory.get("content", "")
+            polarity = self._fact_polarity(content)
+            if polarity == "unknown":
+                continue
+            for entity in _entities(content):
+                entity_to_polarities.setdefault(entity, set()).add(polarity)
+        return {
+            entity
+            for entity, polarities in entity_to_polarities.items()
+            if {"positive", "negative"}.issubset(polarities)
+        }
+
+    @staticmethod
+    def _fact_polarity(content: str) -> str:
+        lower = f" {content.lower()} "
+        if any(pattern in lower for pattern in NEGATION_PATTERNS):
+            return "negative"
+        if any(pattern in lower for pattern in AFFIRMATION_PATTERNS):
+            return "positive"
+        return "unknown"
+
+    @staticmethod
+    def _is_verified(memory: dict) -> bool:
+        tags = set(memory.get("tags") or [])
+        meta = memory.get("meta") or {}
+        content = str(memory.get("content", "")).lower()
+        return (
+            bool(tags & VERIFIED_TAGS)
+            or meta.get("source") == "codebase"
+            or bool(meta.get("verified_at"))
+            or "[pipeline]" in content
+        )
+
+    @staticmethod
+    def _forget_suggestions(conflicts: list[dict]) -> list[dict]:
+        suggestions = []
+        for conflict in conflicts:
+            if not conflict.get("verified_negative"):
+                continue
+            for item in conflict.get("positive", []):
+                memory_id = item.get("id")
+                if memory_id:
+                    suggestions.append(
+                        {
+                            "id": memory_id,
+                            "reason": f"Conflicts with codebase-verified fact about {conflict['entity']}",
+                            "entity": conflict["entity"],
+                        }
+                    )
+        return suggestions
+
+
+def _entities(content: str) -> set[str]:
+    return {match.group(0).replace("\\", "/") for match in ENTITY_PATTERN.finditer(content or "")}
+
+
+def _conflict_item(memory: dict) -> dict:
+    return {
+        "id": memory.get("id"),
+        "content": memory.get("content"),
+        "score": memory.get("score"),
+        "importance": memory.get("importance"),
+        "tags": memory.get("tags", []),
+        "verified": MemoryService._is_verified(memory),
+    }

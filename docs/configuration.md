@@ -43,6 +43,7 @@ Set these in `.env`. Keep MCP config focused on starting the server process.
 | `EVERMIND_RERANK_ENABLED` | `true` | Enable cross-encoder rerank after FTS + dense recall |
 | `EVERMIND_RERANK_MODEL` | `Qwen/Qwen3-Reranker-8B` | Reranker model |
 | `EVERMIND_RERANK_CANDIDATES` | `30` | Number of fused candidates sent to rerank |
+| `EVERMIND_RECALL_MIN_SCORE` | `0.15` | Minimum final recall score when rerank succeeds or `min_score` is passed explicitly |
 | `EVERMIND_LLM_ENABLED` | key present | Enable optional LLM features |
 | `EVERMIND_LLM_MODEL` | `deepseek-ai/DeepSeek-V4-Flash` | LLM model for optional briefing summaries |
 | `EVERMIND_LLM_BRIEFING_SUMMARY` | `false` | Add an LLM-generated summary to `briefing()` |

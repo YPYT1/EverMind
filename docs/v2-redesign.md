@@ -170,9 +170,9 @@ macOS:    ~/.evermind/<project-slug>.db
 
 ---
 
-## 5. 工具层：3 个工具替代 9 个
+## 5. 工具层：从历史 9 工具到统一 42 工具
 
-### 当前 9 个工具（问题）
+### 历史 v1 9 个工具（当时的问题）
 
 list_spaces · remember · request_status · recall · briefing · forget ·
 fetch_history · propose_archive_update · commit_archive_update
@@ -180,7 +180,9 @@ fetch_history · propose_archive_update · commit_archive_update
 Agent 不清楚何时调 briefing 还是 recall，不知道何时轮询 request_status，
 保存重要内容要走三步。
 
-### v2 核心 3 个工具
+> 当前实现已演进为统一 42 工具面：14 个 memory 工具、14 个 codebase graph 工具、14 个 Basic Memory archive 工具。以 `docs/mcp-tools.md` 和 `server_v2.py` 为准。
+
+### v2 核心记忆工具
 
 #### `remember(content, importance=0, tags=[])`
 

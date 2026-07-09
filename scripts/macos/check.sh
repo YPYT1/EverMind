@@ -6,6 +6,7 @@ OK=1
 
 pass() { printf '[OK] %s\n' "$1"; }
 warn() { printf '[WARN] %s\n' "$1"; OK=0; }
+info_warn() { printf '[WARN] %s\n' "$1"; }
 
 [[ -f "$PROJECT_ROOT/.env" ]] && pass ".env exists" || warn ".env missing; run scripts/macos/install.sh"
 command -v uv >/dev/null 2>&1 && pass "uv is available" || warn "uv is not available"
@@ -16,7 +17,7 @@ command -v uv >/dev/null 2>&1 && pass "uv is available" || warn "uv is not avail
 if curl -fsS --max-time 3 http://127.0.0.1:3378/health >/dev/null 2>&1; then
   pass "EverOS health endpoint responded"
 else
-  warn "EverOS health endpoint did not respond"
+  info_warn "EverOS health endpoint did not respond; EverMind MCP v2 can still use embedded SQLite"
 fi
 
 if grep -R "D:\\\\" \

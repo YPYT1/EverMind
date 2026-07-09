@@ -123,9 +123,12 @@ uv pip install sqlite-vec sentence-transformers
 
 ## MCP 工具
 
+EverMind 透過同一個 `evermind` MCP 伺服器暴露 42 個工具：14 個記憶工具、14 個程式碼圖譜工具、14 個 Basic Memory 歸檔工具。
+
 | 工具 | 說明 |
 |------|------|
 | `remember(content, importance, tags)` | 儲存記憶。importance: 0=工作(24h), 1=長期, 2=永久 |
+| `update_memory(id, content, tags, meta)` | 原地修正錯誤記憶；同步重建搜尋、embedding、圖譜和 briefing 快取 |
 | `recall(query, limit, mode)` | 混合搜尋：BM25+語義，自動從 git 檢測專案空間 |
 | `forget(id)` | 按 ID 刪除記憶 |
 | `briefing()` | 載入會話上下文：當前專案的最近和重要記憶 |

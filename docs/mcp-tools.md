@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-EverMind v2 provides 6 MCP tools. These are called by the AI agent automatically according to the session start protocol in the agent instruction files.
+EverMind v2 exposes one unified MCP server with 42 tools: 14 memory tools, 14 Codebase Memory graph tools, and 14 Basic Memory archive tools. Agents only need the `evermind` MCP entry.
 
 ## briefing
 
@@ -22,9 +22,10 @@ EverMind v2 provides 6 MCP tools. These are called by the AI agent automatically
 }
 ```
 
-If `memory_count` is 0, this is a new project. The agent should explore the codebase using `evermind-code-graph` and seed initial memories.
+If `memory_count` is 0, this is a new project. The agent should use the built-in codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`) and seed initial memories.
 
-**Parameters**: none
+**Parameters**:
+- `fast` (boolean, default true) — skip synchronous LLM summary and return cached structured context immediately
 
 ---
 
@@ -37,6 +38,7 @@ If `memory_count` is 0, this is a new project. The agent should explore the code
 - `importance` (0/1/2, default 0) — 0=working/24h, 1=long-term, 2=permanent archive
 - `tags` (array of strings, optional) — for categorization
 - `memory_type` (string, optional) — usually omitted; auto-detected from content
+- `meta` (object, optional) — use `{"source":"codebase","verified_at":"..."}` for codebase-verified facts
 
 **Memory type auto-detection** (no need to set manually):
 - content contains "bug", "error", "fix" → type: bug, layer: episodic
@@ -52,6 +54,29 @@ If `memory_count` is 0, this is a new project. The agent should explore the code
 
 If identical content was already stored, returns `"action": "merged"` and does not create a duplicate.
 
+For facts extracted from codebase tools, add `tags=["codebase-verified"]` and `meta.source="codebase"`. Verified negative facts such as "auth.ts does not exist" are prioritized over older unverified positive memories and may produce `forget_suggestions`.
+
+---
+
+## update_memory
+
+**When to call**: When an existing memory is wrong or stale but should keep the same ID/history.
+
+**Parameters**:
+- `id` (string, required) — memory ID from `recall`, `list`, `graph_explore`, or `briefing`
+- `content` (string, optional) — replacement content
+- `importance` (0/1/2, optional) — recalculates layer
+- `tags` (array of strings, optional) — replacement tag list
+- `memory_type` (string, optional) — set `auto` to re-detect from content
+- `meta` (object, optional) — replacement metadata such as `{"source":"codebase"}`
+
+**Returns**:
+```json
+{"updated": true, "id": "uuid", "action": "updated", "layer": "archive", "type": "decision"}
+```
+
+The update path rebuilds FTS, refreshes embeddings, replaces graph links when content changes, and refreshes briefing cache. Use this for correcting hallucinated facts such as `auth.ts` instead of `forget` + `remember`.
+
 ---
 
 ## recall
@@ -62,6 +87,11 @@ If identical content was already stored, returns `"action": "merged"` and does n
 - `query` (string, required) — what to search for
 - `limit` (integer, default 10) — max results
 - `mode` ("hybrid"/"fts"/"semantic", default "hybrid") — search strategy
+- `layer` (string, optional) — filter by memory layer
+- `tags` (array of strings, optional) — filter by tags
+- `space` (string, optional) — override current project space
+- `all_spaces` (boolean, default false) — search across all spaces
+- `min_score` (number, default 0.15) — final relevance threshold; set 0 to inspect all ranked candidates
 
 **Search modes**:
 - `hybrid` — BM25 keyword + vector KNN fused with RRF (best results, requires sqlite-vec)
@@ -76,7 +106,9 @@ If identical content was already stored, returns `"action": "merged"` and does n
   ],
   "mode": "hybrid",
   "count": 3,
-  "query": "authentication"
+  "query": "authentication",
+  "conflicts": [],
+  "forget_suggestions": []
 }
 ```
 
@@ -126,8 +158,88 @@ If identical content was already stored, returns `"action": "merged"` and does n
 
 **Returns**:
 ```json
-{"entity": "AuthService", "related_memories": [{"id": "...", "content": "...", "layer": "semantic"}], "count": 3}
+{"entity": "AuthService", "related_memories": [{"id": "...", "content": "...", "layer": "semantic"}], "count": 3, "conflicts": []}
 ```
+
+---
+
+## status
+
+**When to call**: When debugging memory counts, embedding/FTS coverage, model availability, or recall latency.
+
+**Parameters**: none
+
+---
+
+## health
+
+**When to call**: When diagnosing duplicate memories, expired working memories, embedding queue state, or API failure counts.
+
+**Parameters**: none
+
+---
+
+## export
+
+**When to call**: When auditing memories or generating documentation from stored knowledge.
+
+**Parameters**:
+- `layer` (string, optional) — export only one layer
+- `format` ("markdown"/"json", default "markdown") — output format
+
+---
+
+## compact
+
+**When to call**: When old episodic memories should be compacted into a semantic summary.
+
+**Parameters**:
+- `older_than_days` (integer, default 30) — compact episodic memories older than this many days
+
+---
+
+## tags
+
+**When to call**: Before filtering `recall()` or `list()` by tags.
+
+**Parameters**: none
+
+---
+
+## reindex
+
+**When to call**: After installing jieba, changing tokenization, or when keyword search misses known memories.
+
+**Parameters**:
+- `all_spaces` (boolean, default false) — rebuild indexes for all spaces
+
+---
+
+## list_spaces
+
+**When to call**: When inspecting known project spaces or debugging `all_spaces` behavior.
+
+**Parameters**: none
+
+---
+
+## Codebase Memory Tools
+
+These tools are exposed by EverMind but executed by the bundled `codebase-memory-mcp` engine:
+
+`index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`.
+
+Use them before writing project facts into memory. Stable code facts should be saved with `tags=["codebase-verified"]`.
+
+---
+
+## Basic Memory Archive Tools
+
+These tools are exposed by EverMind but executed through the installed Basic Memory CLI:
+
+`write_note`, `read_note`, `delete_note`, `edit_note`, `build_context`, `recent_activity`, `search_notes`, `list_memory_projects`, `list_workspaces`, `schema_validate`, `schema_infer`, `schema_diff`, `propose_basic_memory_update`, `commit_basic_memory_update`.
+
+`propose_basic_memory_update` writes a candidate only. `commit_basic_memory_update` requires `confirmed=true`.
 
 ---
 

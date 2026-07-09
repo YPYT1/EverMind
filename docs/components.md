@@ -2,16 +2,19 @@
 
 EverMind v2 consists of three components:
 
-## MCP Server
+## EverMind MCP Server
 
-The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI client via `uv run`. It exposes 4 tools over stdio transport.
+The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI client via `uv run`. It exposes 42 tools over stdio transport: memory, codebase graph, and archive tools.
 
 **Entry point**: `evermind_mcp.server_v2:main_sync`
 
 **Key modules**:
-- `server_v2.py` — 4-tool MCP server, tool dispatch
+- `server_v2.py` — unified MCP server and tool dispatch
 - `memory_service_v2.py` — business logic: remember, recall, briefing, dedup
 - `storage.py` — SQLite + FTS5 + sqlite-vec storage layer
+- `codebase_engine.py` — Codebase Memory CLI bridge
+- `archive_bridge.py` — Basic Memory CLI/candidate bridge
+- `tool_bridge.py` — subprocess JSON/text command bridge
 - `embedding.py` — optional local sentence-transformers with background queue
 - `project_detector.py` — git remote → project slug auto-detection
 - `config_v2.py` — zero-config loader, 4 optional env vars
@@ -27,9 +30,9 @@ Available skills:
 - `skills/evermind-code-graph/SKILL.md` — codebase exploration
 - `skills/project-memory/SKILL.md` — first-time initialization
 
-## Code Graph (Optional)
+## Code Graph and Archive Engines
 
-`evermind-code-graph` is a separate MCP tool (not included in this repo) that indexes repository structure and exposes graph traversal, code search, and call path tracing. EverMind's skills and agent instructions use it during codebase exploration.
+EverMind exposes Codebase Memory and Basic Memory through the same MCP server. The code graph bridge calls the bundled `codebase-memory-mcp` executable. The archive bridge calls the installed `basic-memory` CLI and keeps Basic Memory writes behind the candidate/confirmation workflow.
 
 ## Storage
 

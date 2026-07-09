@@ -9,7 +9,7 @@ TOOLS_ROOT="$EVERMIND_HOME/tools"
 CODEBASE_ROOT="$TOOLS_ROOT/evermind-code-graph"
 SKIP_TOOL_INSTALL="${SKIP_TOOL_INSTALL:-0}"
 ARCHIVE_ENGINE_VERSION="0.22.1"
-CODE_GRAPH_ENGINE_VERSION="v0.8.1"
+CODE_GRAPH_ENGINE_VERSION="v0.9.0"
 
 info() { printf '[EverMind] %s\n' "$1"; }
 warn() { printf '[WARN] %s\n' "$1"; }
@@ -65,7 +65,7 @@ lines = open(path, encoding="utf-8").read().splitlines()
 out = []
 seen = False
 for line in lines:
-    if line.startswith("EVERMIND_CODEBASE_MEMORY_PATH="):
+    if line.startswith("EVERMIND_CODEBASE_MEMORY_PATH=") or line.startswith("# EVERMIND_CODEBASE_MEMORY_PATH="):
         out.append(f"EVERMIND_CODEBASE_MEMORY_PATH={codebase}")
         seen = True
     else:

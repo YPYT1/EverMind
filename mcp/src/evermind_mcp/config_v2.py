@@ -101,6 +101,7 @@ class EverMindConfig:
     rerank_enabled: bool = True
     rerank_model: str = "Qwen/Qwen3-Reranker-8B"
     rerank_candidates: int = 30
+    recall_min_score: float = 0.15
     rerank_instruction: str = (
         "Given a query and a project memory, judge whether the memory helps "
         "answer the query for software engineering work."
@@ -117,6 +118,15 @@ class EverMindConfig:
 
     # Graph
     graph_enabled: bool = True        # env: EVERMIND_GRAPH_ENABLED
+
+    # External engines exposed through this single MCP
+    codebase_memory_path: str = ""
+    codebase_timeout_seconds: float = 120.0
+    basic_memory_path: str = ""
+    archive_root: Path = field(default_factory=lambda: Path.home() / "BasicMemory")
+    archive_candidate_dir: Path = field(default_factory=lambda: Path.home() / "BasicMemory" / ".candidates")
+    archive_timeout_seconds: float = 120.0
+    archive_fast_path_enabled: bool = True
 
     # Jieba / cosine dedup
     jieba_enabled: bool = True
@@ -137,6 +147,14 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
     home_env = _env("EVERMIND_HOME")
     home = Path(home_env) if home_env else Path.home() / ".evermind"
     home.mkdir(parents=True, exist_ok=True)
+    archive_root_env = _env_any(("EVERMIND_ARCHIVE_ROOT", "BASIC_MEMORY_ROOT"))
+    archive_root = Path(archive_root_env) if archive_root_env else Path.home() / "BasicMemory"
+    archive_candidate_env = _env("EVERMIND_ARCHIVE_CANDIDATE_DIR")
+    archive_candidate_dir = (
+        Path(archive_candidate_env)
+        if archive_candidate_env
+        else archive_root / ".candidates"
+    )
 
     workspace_root = _env_any(
         (
@@ -186,6 +204,7 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         rerank_enabled=_env_bool("EVERMIND_RERANK_ENABLED", True),
         rerank_model=_env("EVERMIND_RERANK_MODEL", "Qwen/Qwen3-Reranker-8B"),
         rerank_candidates=_env_int("EVERMIND_RERANK_CANDIDATES", 30),
+        recall_min_score=_env_float("EVERMIND_RECALL_MIN_SCORE", 0.15),
         rerank_instruction=_env("EVERMIND_RERANK_INSTRUCTION", EverMindConfig.rerank_instruction),
         llm_enabled=llm_enabled_default,
         llm_model=_env("EVERMIND_LLM_MODEL", "deepseek-ai/DeepSeek-V4-Flash"),
@@ -193,6 +212,13 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         briefing_recent=_env_int("EVERMIND_BRIEFING_RECENT", 8),
         briefing_important=_env_int("EVERMIND_BRIEFING_IMPORTANT", 5),
         graph_enabled=_env_bool("EVERMIND_GRAPH_ENABLED", True),
+        codebase_memory_path=_env("EVERMIND_CODEBASE_MEMORY_PATH"),
+        codebase_timeout_seconds=_env_float("EVERMIND_CODEBASE_TIMEOUT_SECONDS", 120.0),
+        basic_memory_path=_env("EVERMIND_BASIC_MEMORY_PATH"),
+        archive_root=archive_root,
+        archive_candidate_dir=archive_candidate_dir,
+        archive_timeout_seconds=_env_float("EVERMIND_ARCHIVE_TIMEOUT_SECONDS", 120.0),
+        archive_fast_path_enabled=_env_bool("EVERMIND_ARCHIVE_FAST_PATH_ENABLED", True),
         jieba_enabled=_env_bool("EVERMIND_JIEBA_ENABLED", True),
         cosine_dedup_threshold=_env_float("EVERMIND_COSINE_DEDUP_THRESHOLD", 0.95),
         sensitive_memory_block=_env_bool("EVERMIND_SENSITIVE_MEMORY_BLOCK", True),

@@ -1,18 +1,18 @@
 ---
 name: evermind
-description: Core EverMind memory skill. Use at the start of every session and after meaningful work. Provides briefing, recall, remember, and forget operations via embedded SQLite. No external service required.
+description: Core EverMind memory skill. Use at the start of every session and after meaningful work. Provides one unified MCP with memory, codebase, and archive tools. No external service required for basic use.
 ---
 
 # EverMind Skill
 
 EverMind gives AI coding agents persistent local memory across sessions.
-It uses 4 MCP tools backed by an embedded SQLite database — no EverOS, no cloud, no API keys needed.
+It exposes one MCP tool surface: 14 EverMind memory tools, 14 Codebase Memory graph tools, and 14 Basic Memory archive tools. Basic use needs no cloud or API keys.
 
 ## Two-Component Architecture
 
 EverMind has two parts that work together:
 
-1. **MCP Server** — provides the 4 tools (remember / recall / forget / briefing)
+1. **MCP Server** — provides memory tools plus built-in codebase and archive bridge tools
 2. **Skills** — shape agent behavior so the tools are used at the right time
 
 Both must be set up for EverMind to work as intended.
@@ -23,7 +23,7 @@ Both must be set up for EverMind to work as intended.
 
 ### Step 1 — Load project context
 
-Call `briefing()`.
+Call `briefing()` or `briefing(fast=true)`.
 
 - Returns memories (`memory_count > 0`) → read them, use as project context, proceed.
 - Returns empty (`memory_count = 0`) → this is a new project, go to Step 2.
@@ -33,17 +33,17 @@ Call `briefing()`.
 When no memories exist yet, explore the repository first:
 
 ```
-evermind-code-graph cli index_repository '{"repo_path":"<absolute path>"}'
-evermind-code-graph cli get_architecture '{"project":"<project-name>"}'
+index_repository({"repo_path":"<absolute path>"})
+get_architecture({"project":"<project-name>"})
 ```
 
 Then save what you found:
 
 ```
-remember("Tech stack: <languages, frameworks, databases>", importance=1)
-remember("Entry point: <file> — run with <command>", importance=1)
-remember("Build command: <cmd>  Test command: <cmd>", importance=1)
-remember("Key modules: <summary>", importance=1)
+remember("Tech stack: <languages, frameworks, databases>", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
+remember("Entry point: <file> — run with <command>", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
+remember("Build command: <cmd>  Test command: <cmd>", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
+remember("Key modules: <summary>", importance=1, tags=["codebase-verified"], meta={"source":"codebase"})
 ```
 
 ## During Work
@@ -53,10 +53,21 @@ remember("Key modules: <summary>", importance=1)
 recall("topic or component name")
 ```
 
+Use `recall(..., min_score=0)` only when you intentionally want low-confidence diagnostic results.
+
 **When you find something worth keeping:**
 ```
 remember("content", importance=1)
 ```
+
+For code facts, verify with `search_code`, `search_graph`, or `get_code_snippet` first, then add `tags=["codebase-verified"]` and `meta={"source":"codebase"}`. If `recall` or `graph_explore` returns `conflicts` or `forget_suggestions`, prefer verified codebase facts and ask before deleting old memory.
+
+**When an existing memory is wrong or stale:**
+```
+update_memory({"id":"<memory-id>","content":"correct fact","tags":["codebase-verified"],"meta":{"source":"codebase"}})
+```
+
+Use `update_memory` for corrections that should keep the same memory ID. Use `forget` only when the memory should disappear entirely.
 
 **For permanent decisions (architecture, critical bugs, permanent rules):**
 ```
@@ -81,7 +92,7 @@ Memory type is inferred from content automatically:
 
 No need to set type manually.
 
-## When to use evermind-code-graph
+## When to use codebase tools
 
 Use alongside EverMind when:
 - Starting work on an unfamiliar module
@@ -89,8 +100,8 @@ Use alongside EverMind when:
 - Verifying change impact across files
 
 ```
-evermind-code-graph cli search_code '{"project":"<name>","pattern":"<symbol>"}'
-evermind-code-graph cli trace_path '{"project":"<name>","function_name":"<fn>"}'
+search_code({"project":"<name>","pattern":"<symbol>"})
+trace_path({"project":"<name>","function_name":"<fn>"})
 ```
 
 ## Safety

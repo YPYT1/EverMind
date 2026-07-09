@@ -3,7 +3,7 @@
 ## Overview
 
 EverMind works through two components:
-1. **MCP Server** — gives Claude the `briefing / remember / recall / forget` tools
+1. **MCP Server** — gives Claude the `briefing / remember / update_memory / recall / forget` tools
 2. **Skills** — tell Claude when and how to use those tools
 
 Both must be set up for EverMind to work as intended.
@@ -60,6 +60,7 @@ Claude reads recent and important memories, immediately has project context.
 Claude calls `recall(query)` before starting any feature or investigation.
 Claude calls `remember(content, importance=1)` when finding useful information.
 Claude calls `remember(content, importance=2)` for permanent architecture decisions.
+Claude calls `update_memory(id, content=...)` when a stored memory is wrong but should be corrected in place.
 
 ### Nothing to configure between sessions
 

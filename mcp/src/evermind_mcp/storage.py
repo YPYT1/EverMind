@@ -465,6 +465,12 @@ class EmbeddedStorage:
         ).fetchone()
         return row["rowid"] if row else None
 
+    def get_memory(self, memory_id: str) -> "MemoryRow | None":
+        row = self.conn.execute(
+            "SELECT * FROM memories WHERE id=?", (memory_id,)
+        ).fetchone()
+        return self._row_to_memory(row) if row else None
+
     def expire_working_memories(self, space: str) -> int:
         now = self._now_ms()
         with self._write_lock:
@@ -763,31 +769,87 @@ class EmbeddedStorage:
 
     def update_memory_content(self, memory_id: str, new_content: str) -> None:
         """Update the content of an existing memory (used by fuzzy dedup merge)."""
+        self.update_memory(memory_id, content=new_content)
+
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str | None = None,
+        layer: str | None = None,
+        memory_type: str | None = None,
+        importance: int | None = None,
+        tags: list | None = None,
+        meta: dict | None = None,
+    ) -> "MemoryRow | None":
+        """Update an existing memory and keep FTS/vector/graph state consistent."""
         now = self._now_ms()
         with self._write_lock:
-            # Get rowid and old data for FTS update
             row = self.conn.execute(
-                "SELECT rowid, content, tags FROM memories WHERE id=?", (memory_id,)
+                "SELECT rowid, * FROM memories WHERE id=?", (memory_id,)
             ).fetchone()
             if not row:
-                return
-            rowid = row["rowid"]
-            tags_json = row["tags"]
+                return None
 
-            # Update main table
+            rowid = row["rowid"]
+            old_content = row["content"]
+            new_content = old_content if content is None else content
+            new_layer = row["layer"] if layer is None else layer
+            new_type = row["memory_type"] if memory_type is None else memory_type
+            new_importance = row["importance"] if importance is None else importance
+            new_tags = json.loads(row["tags"]) if tags is None else tags
+            new_meta = json.loads(row["meta"]) if meta is None else meta
+            tags_json = json.dumps(new_tags)
+            meta_json = json.dumps(new_meta)
+            old_layer = row["layer"]
+            if new_layer == "working":
+                expires_at = (
+                    row["expires_at"]
+                    if old_layer == "working" and row["expires_at"] is not None
+                    else now + 24 * 3600 * 1000
+                )
+            else:
+                expires_at = None
+            content_changed = new_content != old_content
+
             self.conn.execute(
-                "UPDATE memories SET content=?, updated_at=? WHERE id=?",
-                (new_content, now, memory_id),
+                """
+                UPDATE memories
+                SET content=?, layer=?, memory_type=?, importance=?, tags=?, meta=?,
+                    updated_at=?, expires_at=?, embedding_ready=?
+                WHERE id=?
+                """,
+                (
+                    new_content,
+                    new_layer,
+                    new_type,
+                    new_importance,
+                    tags_json,
+                    meta_json,
+                    now,
+                    expires_at,
+                    0 if content_changed else row["embedding_ready"],
+                    memory_id,
+                ),
             )
-            # Re-index in FTS: delete old row by rowid, insert new processed content
             self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (rowid,))
-            processed_content = _process_for_fts(new_content)
             self.conn.execute(
                 "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
-                (rowid, processed_content, tags_json)
+                (rowid, _process_for_fts(new_content), tags_json),
             )
-            self._delete_graph_edges_for_memory(memory_id)
+            if content_changed and self._vec_available:
+                self.conn.execute(
+                    "DELETE FROM memory_vecs WHERE memory_rowid=?",
+                    (rowid,),
+                )
+            if content_changed:
+                self._delete_graph_edges_for_memory(memory_id)
             self.conn.commit()
+
+        updated = self.conn.execute(
+            "SELECT * FROM memories WHERE id=?", (memory_id,)
+        ).fetchone()
+        return self._row_to_memory(updated) if updated else None
 
     def find_similar_fts(
         self, content: str, space: str, threshold: float = 0.1

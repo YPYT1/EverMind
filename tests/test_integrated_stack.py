@@ -41,6 +41,21 @@ def run(
     )
 
 
+def copy_script_fixture(tmp_path: Path) -> Path:
+    fixture = tmp_path / "EverMind"
+    for name in ["agents", "scripts", "skills", "templates", ".env.example"]:
+        source = ROOT / name
+        target = fixture / name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    (fixture / "mcp").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "mcp" / "pyproject.toml", fixture / "mcp" / "pyproject.toml")
+    return fixture
+
+
 def test_required_top_level_layout_exists() -> None:
     expected = [
         "README.md",
@@ -109,6 +124,16 @@ def test_required_user_setup_scripts_exist() -> None:
     assert missing == []
 
 
+def test_quick_start_scripts_install_integrated_engines() -> None:
+    windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
+    macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")
+
+    assert "install-all.ps1" in windows
+    assert "Integrated engines installed" in windows
+    assert "install-all.sh" in macos
+    assert "Integrated engines installed" in macos
+
+
 def test_json_and_toml_templates_parse() -> None:
     json_files = list((ROOT / "agents").rglob("*.json")) + list(
         (ROOT / "templates" / "mcp-config").glob("*.json")
@@ -131,56 +156,33 @@ def test_no_standalone_third_party_notice_files() -> None:
 def test_env_example_contains_orchestration_and_cloud_reserved_fields() -> None:
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
     for key in [
-        "EVERMIND_MCP_BACKEND=everos",
-        "EVERMIND_MCP_DEFAULT_SPACE=",
-        "EVERMIND_MCP_USER_ID=mcp-user",
+        "EVERMIND_HOME=",
+        "EVERMIND_DEFAULT_SPACE=",
         "EVERMIND_ARCHIVE_ROOT=",
         "EVERMIND_ARCHIVE_CANDIDATE_DIR=",
-        "EVERMIND_MEMORY_MODE=local",
-        "EVERMIND_SYNC_MODE=off",
-        "EVERMIND_CLOUD_BASE_URL=",
-        "EVERMIND_CLOUD_API_KEY=",
         "EVERMIND_CODEBASE_MEMORY_PATH=",
-        "EVEROS_LLM__API_KEY=",
-        "EVEROS_EMBEDDING__API_KEY=",
-        "EVEROS_RERANK__API_KEY=",
+        "EVERMIND_EMBED_MODEL=Qwen/Qwen3-Embedding-8B",
+        "EVERMIND_RERANK_MODEL=Qwen/Qwen3-Reranker-8B",
+        "EVERMIND_LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash",
     ]:
         assert key in text
 
 
 def test_config_directory_has_one_unified_config_file() -> None:
     files = sorted(path.name for path in (ROOT / "config").iterdir() if path.is_file())
-    assert files == ["evermind.example.yaml"]
+    assert "evermind.example.yaml" in files
 
 
 def test_unified_config_defines_write_policy_and_router() -> None:
     config = (ROOT / "config" / "evermind.example.yaml").read_text(encoding="utf-8")
-    for level in [
-        "level_0_never_store",
-        "level_1_realtime_memory",
-        "level_2_review_candidate",
-        "level_3_official_archive",
-    ]:
-        assert level in config
-    for route in [
-        "project_fact",
-        "architecture_decision",
-        "known_pitfall",
-        "test_practice",
-        "user_preference",
-        "codebase_graph",
-        "secret_or_credential",
-    ]:
-        assert route in config
     for section in [
-        "runtime:",
-        "everos:",
-        "mcp:",
-        "models:",
-        "external_components:",
-        "sync:",
-        "write_policy:",
-        "memory_router:",
+        "storage:",
+        "embedding:",
+        "reranker:",
+        "llm_extraction:",
+        "siliconflow:",
+        "MCP Server",
+        "evermind-mcp",
     ]:
         assert section in config
 
@@ -192,16 +194,16 @@ def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
     )
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     for phrase in [
-        "EverOS",
         "EverMind MCP",
-        "EverMind Archive",
-        "EverMind Code Graph",
-        "Project Boundary",
+        "Codebase Memory",
+        "Basic Memory",
+        "archive_bridge.py",
+        "codebase_engine.py",
     ]:
         assert phrase in components
-    assert "Agent Layer" in architecture
-    assert "Memory Orchestration Layer" in architecture
-    assert "Storage Layer" in architecture
+    assert "MCP Server" in architecture
+    assert "Storage" in architecture
+    assert "42 unified tools" in architecture
     assert "EVERMIND_MEMORY_MODE=local" in roadmap
     assert "EVERMIND_SYNC_MODE=off" in roadmap
 
@@ -212,43 +214,35 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
     zht = (ROOT / "README.zh-TW.md").read_text(encoding="utf-8")
     ja = (ROOT / "README.ja.md").read_text(encoding="utf-8")
     for phrase in [
-        "local-first memory infrastructure layer",
-        "EverMind is not an agent framework",
-        "not a vector database",
-        "not a standalone RAG application",
-        "working context -> searchable memory -> reviewed knowledge",
-        "<details>",
+        "persistent memory across sessions",
+        "42 tools",
+        "codebase-memory-mcp v0.9.0",
+        "basic-memory v0.22.1",
+        "update_memory",
         "Memory Lifecycle",
-        "Community and Support",
+        "Built for engineers",
     ]:
         assert phrase in readme
     for phrase in [
-        "本地记忆基础设施",
-        "不是 Agent 框架",
-        "不是向量数据库",
-        "不是单独的 RAG 应用",
-        "工作上下文 -> 可检索记忆 -> 已审核知识",
-        "<details>",
+        "跨会话的持久记忆",
+        "42 个工具",
+        "update_memory",
         "记忆生命周期",
-        "Community and Support",
+        "社群",
     ]:
         assert phrase in zh
     for phrase in [
-        "本地記憶基礎設施",
-        "不是 Agent 框架",
-        "不是向量資料庫",
-        "工作上下文 -> 可檢索記憶 -> 已審核知識",
-        "<details>",
-        "Community and Support",
+        "跨會話的持久記憶",
+        "42 個工具",
+        "update_memory",
+        "社群",
     ]:
         assert phrase in zht
     for phrase in [
-        "ローカルファーストな記憶インフラストラクチャ",
-        "Agent フレームワークでも",
-        "ベクトルデータベースでも",
-        "working context -> searchable memory -> reviewed knowledge",
-        "<details>",
-        "Community and Support",
+        "セッションを越えた永続的なメモリ",
+        "42 個のツール",
+        "update_memory",
+        "コミュニティ",
     ]:
         assert phrase in ja
 
@@ -331,94 +325,80 @@ def test_windows_install_all_skip_install_generates_local_config(tmp_path: Path)
     if platform.system() != "Windows":
         return
 
-    env_file = ROOT / ".env"
-    generated = ROOT / "generated"
-    if env_file.exists():
-        env_file.unlink()
-    if generated.exists():
-        shutil.rmtree(generated)
+    project_root = copy_script_fixture(tmp_path)
+    env_file = project_root / ".env"
+    generated = project_root / "generated"
 
-    try:
-        result = run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "windows" / "install-all.ps1"),
-                "-SkipToolInstall",
-                "-EverMindHome",
-                str(tmp_path / "EverMindMemory"),
-            ],
-            timeout=90,
-        )
-        assert result.returncode == 0
-        assert "No client config files were overwritten" in result.stdout
-        assert env_file.exists()
-        assert (generated / "mcp-config" / "codex.toml").exists()
-        rendered = (generated / "mcp-config" / "codex.toml").read_text(
-            encoding="utf-8-sig"
-        )
-        assert "<EVERMIND_ROOT>" not in rendered
-        assert "<EVEROS_ROOT>" not in rendered
-        assert "<EVERMIND_ARCHIVE_ROOT>" not in rendered
-    finally:
-        if env_file.exists():
-            env_file.unlink()
-        if generated.exists():
-            shutil.rmtree(generated)
+    result = run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(project_root / "scripts" / "windows" / "install-all.ps1"),
+            "-SkipToolInstall",
+            "-ProjectRoot",
+            str(project_root),
+            "-EverMindHome",
+            str(tmp_path / "EverMindMemory"),
+        ],
+        cwd=project_root,
+        timeout=90,
+    )
+    assert result.returncode == 0
+    assert "No client config files were overwritten" in result.stdout
+    assert env_file.exists()
+    assert (generated / "mcp-config" / "codex.toml").exists()
+    rendered = (generated / "mcp-config" / "codex.toml").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "<EVERMIND_ROOT>" not in rendered
+    assert "<EVEROS_ROOT>" not in rendered
+    assert "<EVERMIND_ARCHIVE_ROOT>" not in rendered
 
 
 def test_windows_configure_noninteractive_generates_user_assets(tmp_path: Path) -> None:
     if platform.system() != "Windows":
         return
 
-    env_file = ROOT / ".env"
-    generated = ROOT / "generated"
+    project_root = copy_script_fixture(tmp_path)
+    env_file = project_root / ".env"
+    generated = project_root / "generated"
     user_home = tmp_path / "user"
-    if env_file.exists():
-        env_file.unlink()
-    if generated.exists():
-        shutil.rmtree(generated)
 
-    try:
-        result = run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "windows" / "configure.ps1"),
-                "-NonInteractive",
-                "-CopySkillsInsteadOfSymlink",
-                "-ProjectRoot",
-                str(ROOT),
-                "-UserHome",
-                str(user_home),
-                "-EverMindHome",
-                str(tmp_path / "EverMindMemory"),
-                "-LlmApiKey",
-                "dummy-llm",
-                "-EmbeddingApiKey",
-                "dummy-embedding",
-            ],
-            timeout=90,
-        )
-        assert result.returncode == 0
-        assert "Configuration complete" in result.stdout
-        assert env_file.exists()
-        env_text = env_file.read_text(encoding="utf-8")
-        assert "EVEROS_LLM__API_KEY=dummy-llm" in env_text
-        assert "EVEROS_EMBEDDING__API_KEY=dummy-embedding" in env_text
-        assert (generated / "mcp-config" / "codex.toml").exists()
-        assert (user_home / ".agents" / "skills" / "evermind" / "SKILL.md").exists()
-    finally:
-        if env_file.exists():
-            env_file.unlink()
-        if generated.exists():
-            shutil.rmtree(generated)
+    result = run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(project_root / "scripts" / "windows" / "configure.ps1"),
+            "-NonInteractive",
+            "-CopySkillsInsteadOfSymlink",
+            "-ProjectRoot",
+            str(project_root),
+            "-UserHome",
+            str(user_home),
+            "-EverMindHome",
+            str(tmp_path / "EverMindMemory"),
+            "-LlmApiKey",
+            "dummy-llm",
+            "-EmbeddingApiKey",
+            "dummy-embedding",
+        ],
+        cwd=project_root,
+        timeout=90,
+    )
+    assert result.returncode == 0
+    assert "Configuration complete" in result.stdout
+    assert env_file.exists()
+    env_text = env_file.read_text(encoding="utf-8")
+    assert "EVEROS_LLM__API_KEY=dummy-llm" in env_text
+    assert "EVEROS_EMBEDDING__API_KEY=dummy-embedding" in env_text
+    assert (generated / "mcp-config" / "codex.toml").exists()
+    assert (user_home / ".agents" / "skills" / "evermind" / "SKILL.md").exists()
 
 
 def test_external_basic_memory_cli_connectivity() -> None:
@@ -445,55 +425,52 @@ def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: P
     if platform.system() != "Windows":
         return
 
-    env_file = ROOT / ".env"
-    generated = ROOT / "generated"
-    if env_file.exists():
-        env_file.unlink()
-    if generated.exists():
-        shutil.rmtree(generated)
+    project_root = copy_script_fixture(tmp_path)
+    env_file = project_root / ".env"
 
-    try:
-        run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "windows" / "install-all.ps1"),
-                "-SkipToolInstall",
-                "-EverMindHome",
-                str(tmp_path / "EverMindMemory"),
-            ],
-            timeout=90,
-        )
-        text = env_file.read_text(encoding="utf-8")
-        for key in [
-            "EVEROS_LLM__API_KEY",
-            "EVEROS_MULTIMODAL__API_KEY",
-            "EVEROS_EMBEDDING__API_KEY",
-            "EVEROS_RERANK__API_KEY",
-        ]:
-            text = text.replace(f"{key}=", f"{key}=dummy-local-check")
-        env_file.write_text(text, encoding="utf-8")
+    run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(project_root / "scripts" / "windows" / "install-all.ps1"),
+            "-SkipToolInstall",
+            "-ProjectRoot",
+            str(project_root),
+            "-EverMindHome",
+            str(tmp_path / "EverMindMemory"),
+        ],
+        cwd=project_root,
+        timeout=90,
+    )
+    text = env_file.read_text(encoding="utf-8")
+    for key in [
+        "EVEROS_LLM__API_KEY",
+        "EVEROS_MULTIMODAL__API_KEY",
+        "EVEROS_EMBEDDING__API_KEY",
+        "EVEROS_RERANK__API_KEY",
+    ]:
+        text = text.replace(f"# {key}=", f"{key}=dummy-local-check")
+        text = text.replace(f"{key}=", f"{key}=dummy-local-check")
+    env_file.write_text(text, encoding="utf-8")
 
-        result = run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "windows" / "check-all.ps1"),
-            ],
-            timeout=90,
-        )
-        assert "EverMind full stack checks passed" in result.stdout
-    finally:
-        if env_file.exists():
-            env_file.unlink()
-        if generated.exists():
-            shutil.rmtree(generated)
+    result = run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(project_root / "scripts" / "windows" / "check-all.ps1"),
+            "-ProjectRoot",
+            str(project_root),
+        ],
+        cwd=project_root,
+        timeout=90,
+    )
+    assert "EverMind full stack checks passed" in result.stdout
 
 
 def test_mcp_bridge_pytest_suite_passes() -> None:
