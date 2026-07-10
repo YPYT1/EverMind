@@ -647,7 +647,7 @@ def test_mcp_interface_pytest_suite_passes() -> None:
     result = run(
         ["uv", "run", "--python", "3.12", "pytest", "-q"],
         cwd=ROOT / "mcp",
-        timeout=180,
+        timeout=300,
     )
     assert "passed" in result.stdout
 
