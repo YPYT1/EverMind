@@ -1,0 +1,306 @@
+"""Tests for discussion context MCP tool."""
+
+import pytest
+
+from mcp.server.fastmcp.exceptions import ToolError
+
+from basic_memory.mcp.tools import build_context, write_note
+
+
+@pytest.mark.asyncio
+async def test_get_basic_discussion_context(client, test_graph, test_project):
+    """Test getting basic discussion context returns JSON dict with expected fields."""
+    result = await build_context(project=test_project.name, url="memory://test/root")
+
+    assert isinstance(result, dict)
+    assert len(result["results"]) == 1
+
+    primary = result["results"][0]["primary_result"]
+    assert primary["permalink"] == f"{test_project.name}/test/root"
+    assert len(result["results"][0]["related_results"]) > 0
+
+    # Verify metadata fields
+    meta = result["metadata"]
+    assert meta["uri"] == f"{test_project.name}/test/root"
+    assert meta["depth"] == 1  # default depth
+    assert meta["timeframe"] is not None
+    assert meta["primary_count"] == 1
+    # COMPAT(v0.18): generated_at and total_results restored for old clients
+    assert "generated_at" in meta
+    assert "total_results" in meta
+
+    # Entity fields present
+    assert "entity_id" in primary
+    assert "created_at" in primary
+
+    # Verify observation-level fields
+    if result["results"][0]["observations"]:
+        obs = result["results"][0]["observations"][0]
+        assert "observation_id" in obs
+        assert "entity_id" in obs
+        assert "file_path" in obs
+        assert "created_at" in obs
+        assert "permalink" in obs
+        assert "category" in obs
+        assert "content" in obs
+
+    # Verify related_results item structure — entities have identifying fields
+    for related in result["results"][0]["related_results"]:
+        item_type = related["type"]
+        if item_type == "entity":
+            assert "title" in related
+            assert "file_path" in related
+            assert "created_at" in related
+            assert "entity_id" in related
+        elif item_type == "relation":
+            assert "relation_type" in related
+            assert "title" in related
+            assert "file_path" in related
+            assert "created_at" in related
+            assert "relation_id" in related
+            assert "entity_id" in related
+
+
+@pytest.mark.asyncio
+async def test_get_discussion_context_pattern(client, test_graph, test_project):
+    """Test getting context with pattern matching."""
+    result = await build_context(project=test_project.name, url="memory://test/*", depth=1)
+
+    assert isinstance(result, dict)
+    assert len(result["results"]) > 1  # Should match multiple test/* paths
+    assert all(
+        f"{test_project.name}/test/" in item["primary_result"]["permalink"]
+        for item in result["results"]
+    )
+    assert result["metadata"]["depth"] == 1
+
+
+@pytest.mark.asyncio
+async def test_build_context_project_id_preserves_workspace_contextvar_canonical_path(
+    app, test_project
+):
+    """project_id routing keeps ContextVar workspace prefixes in memory URL lookups."""
+    from basic_memory.workspace_context import workspace_permalink_context
+
+    with workspace_permalink_context(workspace_slug="team-paul", workspace_type="organization"):
+        await write_note(
+            project_id=test_project.external_id,
+            title="Workspace Build Context Note",
+            directory="tests",
+            content="Build context should find this workspace note",
+        )
+
+        result = await build_context(
+            project_id=test_project.external_id,
+            url="memory://tests/*",
+            timeframe="30d",
+        )
+
+    assert isinstance(result, dict)
+    assert len(result["results"]) == 1
+    primary = result["results"][0]["primary_result"]
+    assert primary["permalink"] == (
+        f"team-paul/{test_project.name}/tests/workspace-build-context-note"
+    )
+    assert primary["content"] == "Build context should find this workspace note"
+
+
+@pytest.mark.asyncio
+async def test_get_discussion_context_timeframe(client, test_graph, test_project):
+    """Test timeframe parameter filtering."""
+    # Get recent context
+    recent = await build_context(
+        project=test_project.name,
+        url="memory://test/root",
+        timeframe="1d",
+    )
+
+    # Get older context
+    older = await build_context(
+        project=test_project.name,
+        url="memory://test/root",
+        timeframe="30d",
+    )
+
+    assert isinstance(recent, dict)
+    assert isinstance(older, dict)
+
+    # Calculate total related items
+    total_recent_related = (
+        sum(len(item["related_results"]) for item in recent["results"]) if recent["results"] else 0
+    )
+    total_older_related = (
+        sum(len(item["related_results"]) for item in older["results"]) if older["results"] else 0
+    )
+
+    assert total_older_related >= total_recent_related
+
+
+@pytest.mark.asyncio
+async def test_get_discussion_context_not_found(client, test_project):
+    """Test handling of non-existent URIs."""
+    result = await build_context(project=test_project.name, url="memory://test/does-not-exist")
+
+    assert isinstance(result, dict)
+    assert len(result["results"]) == 0
+    assert result["metadata"]["primary_count"] == 0
+    assert result["metadata"]["related_count"] == 0
+
+
+# Test data for different timeframe formats
+valid_timeframes = [
+    "7d",  # Standard format
+    "yesterday",  # Natural language
+    "0d",  # Zero duration
+]
+
+invalid_timeframes = [
+    "invalid",  # Nonsense string
+    # NOTE: "tomorrow" now returns 1 day ago due to timezone safety - no longer invalid
+]
+
+
+@pytest.mark.asyncio
+async def test_build_context_timeframe_formats(client, test_graph, test_project):
+    """Test that build_context accepts various timeframe formats."""
+    test_url = "memory://specs/test"
+
+    # Test each valid timeframe
+    for timeframe in valid_timeframes:
+        try:
+            result = await build_context(
+                project=test_project.name,
+                url=test_url,
+                timeframe=timeframe,
+                page=1,
+                page_size=10,
+                max_related=10,
+            )
+            assert result is not None
+        except Exception as e:
+            pytest.fail(f"Failed with valid timeframe '{timeframe}': {str(e)}")
+
+    # Test invalid timeframes should raise ValidationError
+    for timeframe in invalid_timeframes:
+        with pytest.raises(ToolError):
+            await build_context(project=test_project.name, url=test_url, timeframe=timeframe)
+
+
+@pytest.mark.asyncio
+async def test_build_context_string_depth_parameter(client, test_graph, test_project):
+    """Test that build_context handles string depth parameter correctly."""
+    test_url = "memory://test/root"
+
+    # Test valid string depth parameter — should convert to int
+    try:
+        result = await build_context(url=test_url, depth="2", project=test_project.name)
+        assert isinstance(result, dict)
+        assert isinstance(result["metadata"]["depth"], int)
+        assert result["metadata"]["depth"] == 2
+    except ToolError:
+        # This is also acceptable behavior - type validation should catch it
+        pass
+
+    # Test invalid string depth parameter - should raise ToolError
+    with pytest.raises(ToolError):
+        await build_context(test_url, depth="invalid", project=test_project.name)
+
+
+@pytest.mark.asyncio
+async def test_build_context_text_format(client, test_graph, test_project):
+    """Test that output_format='text' returns compact text."""
+    result = await build_context(
+        project=test_project.name,
+        url="memory://test/root",
+        output_format="text",
+    )
+
+    assert isinstance(result, str)
+    # Should contain the context header
+    assert "# Context:" in result
+    # Should contain the entity title
+    assert "Root" in result
+    # Should contain the footer with counts
+    assert "primary" in result
+    assert "project:" in result
+
+
+@pytest.mark.asyncio
+async def test_build_context_markdown_pattern(client, test_graph, test_project):
+    """Test markdown format with pattern matching (multiple results)."""
+    result = await build_context(
+        project=test_project.name,
+        url="memory://test/*",
+        output_format="text",
+    )
+
+    assert isinstance(result, str)
+    # Multiple results should use URI as title, not single entity title
+    assert "# Context:" in result
+    # Should contain separator between entity blocks
+    assert "---" in result
+    assert "primary" in result
+
+
+@pytest.mark.asyncio
+async def test_build_context_markdown_not_found(client, test_project):
+    """Test markdown format for non-existent URIs."""
+    result = await build_context(
+        project=test_project.name,
+        url="memory://test/does-not-exist",
+        output_format="text",
+    )
+
+    assert isinstance(result, str)
+    assert "No results found" in result
+    assert test_project.name in result
+
+
+def test_format_entity_block_renders_unresolved_relations_by_name():
+    """Unresolved forward references render their target text, not [[None]] (#955)."""
+    from datetime import UTC, datetime
+
+    from basic_memory.mcp.tools.build_context import _format_entity_block
+    from basic_memory.schemas.memory import (
+        ContextResult,
+        EntitySummary,
+        RelationSummary,
+    )
+
+    now = datetime.now(UTC)
+    page = EntitySummary(
+        external_id="entity-1",
+        entity_id=1,
+        title="write-note(3)",
+        permalink="man3/write-note-3",
+        content="# write-note(3)",
+        file_path="man3/write-note-3.md",
+        created_at=now,
+    )
+    unresolved = RelationSummary(
+        title="see_also: edit-note(3)",
+        file_path="man3/write-note-3.md",
+        permalink="man3/write-note-3/see-also/edit-note-3",
+        relation_type="see_also",
+        from_entity="write-note(3)",
+        to_entity=None,
+        to_name="edit-note(3)",
+        created_at=now,
+    )
+    resolved = RelationSummary(
+        title="see_also: bm-note(5)",
+        file_path="man3/write-note-3.md",
+        permalink="man3/write-note-3/see-also/bm-note-5",
+        relation_type="see_also",
+        from_entity="write-note(3)",
+        to_entity="bm-note(5)",
+        to_name="bm-note(5)",
+        created_at=now,
+    )
+    block = _format_entity_block(
+        ContextResult(primary_result=page, observations=[], related_results=[unresolved, resolved])
+    )
+
+    assert "- see_also [[edit-note(3)]]" in block
+    assert "- see_also [[bm-note(5)]]" in block
+    assert "[[None]]" not in block

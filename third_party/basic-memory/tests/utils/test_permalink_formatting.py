@@ -1,0 +1,180 @@
+"""Test permalink formatting during sync."""
+
+from pathlib import Path
+
+import pytest
+
+from basic_memory.config import ProjectConfig
+from basic_memory.services import EntityService
+from basic_memory.sync.sync_service import SyncService
+from basic_memory.utils import build_canonical_permalink, generate_permalink
+from basic_memory.workspace_context import workspace_permalink_context
+
+
+async def create_test_file(path: Path, content: str = "test content") -> None:
+    """Create a test file with given content."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+@pytest.mark.asyncio
+async def test_permalink_formatting(
+    sync_service: SyncService, project_config: ProjectConfig, entity_service: EntityService
+):
+    """Test that permalinks are properly formatted during sync.
+
+    This ensures:
+    - Underscores are converted to hyphens
+    - Spaces are converted to hyphens
+    - Mixed case is lowercased
+    - Directory structure is preserved
+    - Multiple directories work correctly
+    """
+    project_dir = project_config.home
+
+    # Test cases with different filename formats
+    test_cases = [
+        # filename -> expected permalink
+        ("my_awesome_feature.md", "my-awesome-feature"),
+        ("MIXED_CASE_NAME.md", "mixed-case-name"),
+        ("spaces and_underscores.md", "spaces-and-underscores"),
+        ("design/model_refactor.md", "design/model-refactor"),
+        (
+            "test/multiple_word_directory/feature_name.md",
+            "test/multiple-word-directory/feature-name",
+        ),
+    ]
+
+    # Create test files
+    for filename, _ in test_cases:
+        content = """
+---
+type: knowledge
+created: 2024-01-01
+modified: 2024-01-01
+---
+# Test File
+
+Testing permalink generation.
+"""
+        await create_test_file(project_dir / filename, content)
+
+    # Run sync
+    await sync_service.sync(project_config.home)
+
+    # Verify permalinks - with project-prefixed permalinks enabled,
+    # auto-generated permalinks include the project slug prefix
+    project_prefix = generate_permalink(project_config.name)
+    for filename, expected_permalink in test_cases:
+        entity = await entity_service.repository.get_by_file_path(filename)
+        expected_full = f"{project_prefix}/{expected_permalink}"
+        assert entity.permalink == expected_full, (
+            f"File {filename} should have permalink {expected_full}"
+        )
+
+
+@pytest.mark.parametrize(
+    "input_path, expected",
+    [
+        ("test/Über File.md", "test/uber-file"),
+        ("docs/résumé.md", "docs/resume"),
+        ("notes/Déjà vu.md", "notes/deja-vu"),
+        ("papers/Jürgen's Findings.md", "papers/jurgens-findings"),
+        ("archive/François Müller.md", "archive/francois-muller"),
+        ("research/Søren Kierkegård.md", "research/soren-kierkegard"),
+        ("articles/El Niño.md", "articles/el-nino"),
+        ("ArticlesElNiño.md", "articles-el-nino"),
+        ("articleselniño.md", "articleselnino"),
+        ("articles-El-Niño.md", "articles-el-nino"),
+    ],
+)
+def test_latin_accents_transliteration(input_path, expected):
+    """Test that Latin letters with accents are properly transliterated."""
+    assert generate_permalink(input_path) == expected
+
+
+@pytest.mark.parametrize(
+    "input_path, expected",
+    [
+        ("中文/测试文档.md", "中文/测试文档"),
+        ("notes/北京市.md", "notes/北京市"),
+        ("research/上海简介.md", "research/上海简介"),
+        ("docs/中文 English Mixed.md", "docs/中文-english-mixed"),
+        ("articles/东京Tokyo混合.md", "articles/东京-tokyo-混合"),
+        ("papers/汉字_underscore_test.md", "papers/汉字-underscore-test"),
+        ("projects/中文CamelCase测试.md", "projects/中文-camel-case-测试"),
+    ],
+)
+def test_chinese_character_preservation(input_path, expected):
+    """Test that Chinese characters are preserved in permalinks."""
+    assert generate_permalink(input_path) == expected
+
+
+@pytest.mark.parametrize(
+    "input_path, expected",
+    [
+        ("mixed/北京Café.md", "mixed/北京-cafe"),
+        ("notes/东京Tōkyō.md", "notes/东京-tokyo"),
+        ("research/München中文.md", "research/munchen-中文"),
+        ("docs/Über测试.md", "docs/uber-测试"),
+        ("complex/北京Beijing上海Shanghai.md", "complex/北京-beijing-上海-shanghai"),
+        ("special/中文!@#$%^&*()_+.md", "special/中文"),
+        ("punctuation/你好，世界!.md", "punctuation/你好世界"),
+    ],
+)
+def test_mixed_character_sets(input_path, expected):
+    """Test handling of mixed character sets and edge cases."""
+    assert generate_permalink(input_path) == expected
+
+
+def test_build_canonical_permalink_prefixes_same_workspace_and_project_slug():
+    """Workspace and project slugs may be equal but remain distinct permalink segments."""
+    assert (
+        build_canonical_permalink(
+            "acme",
+            "notes/foo.md",
+            workspace_permalink="acme",
+        )
+        == "acme/acme/notes/foo"
+    )
+
+
+def test_build_canonical_permalink_preserves_complete_workspace_prefix():
+    """Already workspace-qualified canonical paths should not gain duplicate prefixes."""
+    assert (
+        build_canonical_permalink(
+            "main",
+            "team-paul/main/notes/foo.md",
+            workspace_permalink="team-paul",
+        )
+        == "team-paul/main/notes/foo"
+    )
+
+
+def test_build_canonical_permalink_workspace_prefix_ignores_project_prefix_flag():
+    """Organization workspace canonical permalinks always include workspace and project."""
+    assert (
+        build_canonical_permalink(
+            "main",
+            "notes/foo.md",
+            include_project=False,
+            workspace_permalink="team-paul",
+        )
+        == "team-paul/main/notes/foo"
+    )
+
+
+@pytest.mark.asyncio
+async def test_entity_service_workspace_permalink_uses_project_when_prefixes_disabled(
+    entity_service: EntityService,
+    project_config: ProjectConfig,
+):
+    """Workspace note creation uses complete canonical shape even without local project prefixes."""
+    assert entity_service.app_config is not None
+    entity_service.app_config.permalinks_include_project = False
+
+    with workspace_permalink_context("team-paul", "organization"):
+        permalink = await entity_service.resolve_permalink("team/no-project-prefix-service.md")
+
+    project_permalink = generate_permalink(project_config.name)
+    assert permalink == f"team-paul/{project_permalink}/team/no-project-prefix-service"

@@ -1,0 +1,427 @@
+"""Write note tool for Basic Memory MCP server."""
+
+import textwrap
+from pathlib import Path
+from typing import Annotated, List, Union, Optional, Literal
+
+import logfire
+from loguru import logger
+from pydantic import AliasChoices, BeforeValidator, Field
+
+from basic_memory.config import ConfigManager
+from basic_memory.mcp.project_context import get_project_client, add_project_metadata
+from basic_memory.mcp.server import mcp
+from fastmcp import Context
+from basic_memory.schemas.base import Entity
+from basic_memory.utils import (
+    build_qualified_permalink_reference,
+    coerce_dict,
+    parse_tags,
+    validate_project_path,
+)
+from basic_memory.workspace_context import current_workspace_permalink_context
+
+# Define TagType as a Union that can accept either a string or a list of strings or None
+TagType = Union[List[str], str, None]
+
+
+def _compose_workspace_project_route(
+    *,
+    workspace: Optional[str],
+    project: Optional[str],
+    project_id: Optional[str],
+) -> Optional[str]:
+    """Return the explicit project route requested by workspace/project args."""
+    if workspace is None:
+        return project
+
+    cleaned_workspace = workspace.strip().strip("/")
+    if not cleaned_workspace:
+        raise ValueError("workspace must not be empty when provided")
+    if "/" in cleaned_workspace:
+        raise ValueError("workspace must be a single workspace slug, name, or tenant_id")
+    if project_id is not None:
+        raise ValueError("workspace cannot be combined with project_id; use project_id alone")
+    if project is None or not project.strip().strip("/"):
+        raise ValueError("workspace requires an explicit project argument")
+
+    cleaned_project = project.strip().strip("/")
+    if "/" in cleaned_project:
+        raise ValueError(
+            "Use either workspace='workspace' with project='project', "
+            "or project='workspace/project', not both"
+        )
+    return f"{cleaned_workspace}/{cleaned_project}"
+
+
+@mcp.tool(
+    title="Write Note",
+    description="Create a markdown note. If the note already exists, returns an error by default — pass overwrite=True to replace.",
+    tags={"notes"},
+    annotations={
+        "title": "Write Note",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def write_note(
+    title: str,
+    content: str,
+    # Folder/dir/path are interchangeable in models' training data.
+    directory: Annotated[
+        str,
+        Field(validation_alias=AliasChoices("directory", "folder", "dir", "path")),
+    ],
+    project: Optional[str] = None,
+    workspace: Optional[str] = None,
+    project_id: Optional[str] = None,
+    tags: list[str] | str | None = None,
+    note_type: str = "note",
+    metadata: Annotated[dict | None, BeforeValidator(coerce_dict)] = None,
+    overwrite: bool | None = None,
+    output_format: Literal["text", "json"] = "text",
+    context: Context | None = None,
+) -> str | dict:
+    """Write a markdown note to the knowledge base.
+
+    Creates a markdown note with semantic observations and relations.
+    If the note already exists, returns an error by default. Pass overwrite=True
+    to replace the existing note. For incremental updates, use edit_note instead.
+
+    Project Resolution:
+    Server resolves projects using a unified priority chain (same in local and cloud modes):
+    Single Project Mode → project parameter → default project.
+    Uses default project automatically. Specify `project` parameter to target a different project.
+
+    The content can include semantic observations and relations using markdown syntax:
+
+    Observations format:
+        `- [category] Observation text #tag1 #tag2 (optional context)`
+
+        Examples:
+        `- [design] Files are the source of truth #architecture (All state comes from files)`
+        `- [tech] Using SQLite for storage #implementation`
+        `- [note] Need to add error handling #todo`
+
+    Relations format:
+        - Explicit: `- relation_type [[Entity]] (optional context)`
+        - Quoted: `- "multi word relation type" [[Entity]] (optional context)`
+        - Quoted: `- 'multi word relation type' [[Entity]] (optional context)`
+        - Inline: Any other `[[Entity]]` reference creates a `links_to` relation
+
+        Examples:
+        `- depends_on [[Content Parser]] (Need for semantic extraction)`
+        `- "based on" [[Design Notes]]`
+        `- 'in response to' [[Incident Review]]`
+        `- implements [[Search Spec]] (Initial implementation)`
+        `- This feature extends [[Base Design]] and uses [[Core Utils]]`
+
+    Args:
+        title: The title of the note
+        content: Markdown content for the note, can include observations and relations
+        directory: Directory path relative to project root where the file should be saved.
+                   Use forward slashes (/) as separators. Use "/" or "" to write to project root.
+                   Examples: "notes", "projects/2025", "research/ml", "/" (root)
+        project: Project name to write to. Optional - server will resolve using the
+                hierarchy above. Use "workspace/project" to route to a project in a
+                specific cloud workspace. A bare name that exists in multiple
+                workspaces resolves to the default workspace, so use the qualified
+                form (or project_id) to disambiguate. If unknown, use
+                list_memory_projects() to discover available projects and their
+                qualified names.
+        workspace: Workspace slug, name, or tenant_id. When provided with `project`,
+                routes as `workspace/project`. Cannot be combined with `project_id`.
+        project_id: Project external_id (UUID). Prefer this over `project` when known —
+                it routes to the exact project regardless of name collisions across cloud
+                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+        tags: Tags to categorize the note. Can be a list of strings, a comma-separated string, or None.
+              Note: If passing from external MCP clients, use a string format (e.g. "tag1,tag2,tag3")
+        note_type: Type of note to create (stored in frontmatter). Defaults to "note".
+                   Can be "guide", "report", "config", "person", etc.
+        metadata: Optional dict of extra frontmatter fields merged into entity_metadata.
+                  Useful for schema notes or any note that needs custom YAML frontmatter
+                  beyond title/type/tags. Nested dicts are supported.
+        overwrite: If True, replace existing note on conflict. If False, error on conflict.
+                   If None (default), consult write_note_overwrite_default config setting.
+        output_format: "text" returns the existing markdown summary. "json" returns
+                       machine-readable metadata.
+        context: Optional FastMCP context for performance caching.
+
+    Returns:
+        A markdown formatted summary of the semantic content, including:
+        - Creation/update status with project name
+        - File path and checksum
+        - Observation counts by category
+        - Relation counts (resolved/unresolved)
+        - Tags if present
+        - Session tracking metadata for project awareness
+
+    Examples:
+        # Create a simple note (uses default project automatically)
+        write_note(
+            project="my-research",
+            title="Meeting Notes",
+            directory="meetings",
+            content="# Weekly Standup\\n\\n- [decision] Use SQLite for storage #tech"
+        )
+
+        # Create a note with tags and note type
+        write_note(
+            project="work-project",
+            title="API Design",
+            directory="specs",
+            content="# REST API Specification\\n\\n- implements [[Authentication]]",
+            tags=["api", "design"],
+            note_type="guide"
+        )
+
+        # Overwrite an existing note explicitly
+        write_note(
+            project="my-research",
+            title="Meeting Notes",
+            directory="meetings",
+            content="# Weekly Standup\\n\\n- [decision] Use PostgreSQL instead #tech",
+            overwrite=True
+        )
+
+        # Create a schema note with custom frontmatter via metadata
+        write_note(
+            title="Person",
+            directory="schemas",
+            note_type="schema",
+            content="# Person\\n\\nSchema for person entities.",
+            metadata={
+                "entity": "person",
+                "version": 1,
+                "schema": {"name": "string", "role?": "string"},
+                "settings": {"validation": "warn"},
+            },
+        )
+
+    Raises:
+        HTTPError: If project doesn't exist or is inaccessible
+        SecurityError: If directory path attempts path traversal
+    """
+    # Resolve overwrite flag: explicit parameter > config default
+    # Trigger: caller omitted the parameter (None)
+    # Why: lets users set a global default without breaking per-call overrides
+    effective_overwrite = (
+        overwrite if overwrite is not None else ConfigManager().config.write_note_overwrite_default
+    )
+    project = _compose_workspace_project_route(
+        workspace=workspace,
+        project=project,
+        project_id=project_id,
+    )
+
+    with logfire.span(
+        "mcp.tool.write_note",
+        entrypoint="mcp",
+        tool_name="write_note",
+        requested_project=project,
+        requested_project_id=project_id,
+        note_type=note_type,
+        overwrite=effective_overwrite,
+        output_format=output_format,
+    ):
+        async with get_project_client(project, context=context, project_id=project_id) as (
+            client,
+            active_project,
+        ):
+            logger.info(
+                f"MCP tool call tool=write_note project={active_project.name} directory={directory}, title={title}, tags={tags}"
+            )
+
+            # Normalize "/" to empty string for root directory (must happen before validation)
+            if directory == "/":
+                directory = ""
+
+            # Validate directory path to prevent path traversal attacks
+            project_path = active_project.home
+            if directory and not validate_project_path(directory, project_path):
+                logger.warning(
+                    "Attempted path traversal attack blocked",
+                    directory=directory,
+                    project=active_project.name,
+                )
+                if output_format == "json":
+                    return {
+                        "title": title,
+                        "permalink": None,
+                        "file_path": None,
+                        "checksum": None,
+                        "action": "created",
+                        "error": "SECURITY_VALIDATION_ERROR",
+                    }
+                return f"# Error\n\nDirectory path '{directory}' is not allowed - paths must stay within project boundaries"
+
+            # Process tags using the helper function
+            tag_list = parse_tags(tags)
+
+            # Build entity_metadata from optional metadata, then explicit tags on top
+            # Order matters: explicit tags parameter takes precedence over metadata["tags"]
+            entity_metadata = {}
+            if metadata:
+                entity_metadata.update(metadata)
+            if tag_list:
+                entity_metadata["tags"] = tag_list
+
+            entity = Entity(
+                title=title,
+                directory=directory,
+                note_type=note_type,
+                content_type="text/markdown",
+                content=content,
+                entity_metadata=entity_metadata or None,
+            )
+
+            # Import here to avoid circular import
+            from basic_memory.mcp.clients import KnowledgeClient
+
+            # Use typed KnowledgeClient for API calls
+            knowledge_client = KnowledgeClient(client, active_project.external_id)
+
+            # Try to create the entity first (optimistic create)
+            logger.debug(f"Attempting to create entity permalink={entity.permalink}")
+            action = "Created"  # Default to created
+            try:
+                result = await knowledge_client.create_entity(entity.model_dump())
+                action = "Created"
+            except Exception as e:
+                # If creation failed due to conflict (already exists), try to update
+                if (
+                    "409" in str(e)
+                    or "conflict" in str(e).lower()
+                    or "already exists" in str(e).lower()
+                ):
+                    # Guard: block overwrite unless explicitly enabled
+                    if not effective_overwrite:
+                        logger.warning(
+                            f"write_note blocked: note already exists (overwrite not enabled) "
+                            f"permalink={entity.permalink}"
+                        )
+                        if output_format == "json":
+                            return {
+                                "title": title,
+                                "permalink": entity.permalink,
+                                "file_path": None,
+                                "checksum": None,
+                                "action": "conflict",
+                                "error": "NOTE_ALREADY_EXISTS",
+                            }
+                        return _format_overwrite_error(title, entity.permalink, active_project.name)
+
+                    logger.debug(f"Entity exists, updating instead permalink={entity.permalink}")
+                    try:
+                        if not entity.permalink:
+                            raise ValueError(
+                                "Entity permalink is required for updates"
+                            )  # pragma: no cover
+                        # Resolve the conflicting entity by file_path with strict=True.
+                        # The 409 came from a file_service.exists(file_path) check, so this
+                        # file_path is the authoritative key for the canonical row. Resolving
+                        # by permalink with fuzzy fallback (the previous behavior) could pick
+                        # an orphan with a similar permalink — especially in workspace-prefixed
+                        # palaces where the client-built permalink omits the workspace slug —
+                        # causing the update to write to the wrong row and the next call to
+                        # mint a -1/-2 suffix on the canonical entity.
+                        # POSIX-normalize so Windows clients send the same form the server stores.
+                        file_path_identifier = Path(entity.file_path).as_posix()
+                        entity_id = await knowledge_client.resolve_entity(
+                            file_path_identifier, strict=True
+                        )
+                        result = await knowledge_client.update_entity(
+                            entity_id, entity.model_dump()
+                        )
+                        action = "Updated"
+                    except Exception as update_error:  # pragma: no cover
+                        # Re-raise the original error if update also fails
+                        raise e from update_error  # pragma: no cover
+                else:
+                    # Re-raise if it's not a conflict error
+                    raise  # pragma: no cover
+            response_permalink = result.permalink
+            workspace_context = current_workspace_permalink_context()
+            if response_permalink and workspace_context is not None:
+                response_permalink = build_qualified_permalink_reference(
+                    active_project.permalink,
+                    response_permalink,
+                    workspace_permalink=workspace_context.workspace_slug,
+                )
+
+            summary = [
+                f"# {action} note",
+                f"project: {active_project.name}",
+                f"file_path: {result.file_path}",
+                f"permalink: {response_permalink}",
+                f"checksum: {result.checksum[:8] if result.checksum else 'unknown'}",
+            ]
+
+            # Count observations by category
+            categories = {}
+            if result.observations:
+                for obs in result.observations:
+                    categories[obs.category] = categories.get(obs.category, 0) + 1
+
+                summary.append("\n## Observations")
+                for category, count in sorted(categories.items()):
+                    summary.append(f"- {category}: {count}")
+
+            # Count resolved/unresolved relations
+            unresolved = 0
+            resolved = 0
+            if result.relations:
+                unresolved = sum(1 for r in result.relations if not r.to_id)
+                resolved = len(result.relations) - unresolved
+
+                summary.append("\n## Relations")
+                summary.append(f"- Resolved: {resolved}")
+                if unresolved:
+                    summary.append(f"- Unresolved: {unresolved}")
+                    summary.append(
+                        "\nNote: Unresolved relations point to entities that don't exist yet."
+                    )
+                    summary.append(
+                        "They will be automatically resolved when target entities are created or during sync operations."
+                    )
+
+            if tag_list:
+                summary.append(f"\n## Tags\n- {', '.join(tag_list)}")
+
+            # Log the response with structured data
+            logger.info(
+                f"MCP tool response: tool=write_note project={active_project.name} action={action} permalink={response_permalink} observations_count={len(result.observations)} relations_count={len(result.relations)} resolved_relations={resolved} unresolved_relations={unresolved}"
+            )
+            if output_format == "json":
+                return {
+                    "title": result.title,
+                    "permalink": response_permalink,
+                    "file_path": result.file_path,
+                    "checksum": result.checksum,
+                    "action": action.lower(),
+                }
+
+            summary_result = "\n".join(summary)
+            return add_project_metadata(summary_result, active_project.name)
+
+
+def _format_overwrite_error(title: str, permalink: str | None, project_name: str) -> str:
+    """Format a helpful error when write_note is blocked by the overwrite guard."""
+    return textwrap.dedent(f"""\
+        # Error: Note already exists
+
+        **"{title}"** already exists (permalink: `{permalink}`).
+
+        `write_note` does not overwrite by default. Choose an option:
+
+        | Goal | Action |
+        |------|--------|
+        | Append content | `edit_note("{permalink}", operation="append", content="...")` |
+        | Prepend content | `edit_note("{permalink}", operation="prepend", content="...")` |
+        | Replace a section | `edit_note("{permalink}", operation="replace_section", section="...", content="...")` |
+        | Full replace | `write_note("{title}", ..., overwrite=True)` |
+        | Inspect first | `read_note("{permalink}")` |
+
+        Project: {project_name}""")
