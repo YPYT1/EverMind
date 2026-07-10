@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from urllib import error
 
@@ -368,7 +367,7 @@ def test_sqlite_vec_loaded_for_background_thread_connections(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_server_v2_dispatch_forget_reindex_health_list_spaces(tmp_path, monkeypatch):
+async def test_fastmcp_dispatch_forget_reindex_health_list_spaces(tmp_path, monkeypatch):
     import evermind_mcp.server_v2 as server_mod
 
     cfg = EverMindConfig(
@@ -379,24 +378,27 @@ async def test_server_v2_dispatch_forget_reindex_health_list_spaces(tmp_path, mo
     )
     svc = MemoryService(cfg)
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
 
-    remember_text = await server_mod.call_tool("remember", {"content": "delete me"})
-    remembered = json.loads(remember_text[0].text)
-    forget_text = await server_mod.call_tool("forget", {"id": remembered["id"]})
-    forgotten = json.loads(forget_text[0].text)
+    remembered = (
+        await server_mod.mcp.call_tool("remember", {"content": "delete me"})
+    ).structured_content
+    forgotten = (
+        await server_mod.mcp.call_tool("forget", {"id": remembered["id"]})
+    ).structured_content
     assert forgotten["deleted"] is True
 
     for tool_name in ("reindex", "health", "list_spaces"):
-        result_text = await server_mod.call_tool(tool_name, {})
-        payload = json.loads(result_text[0].text)
+        payload = (await server_mod.mcp.call_tool(tool_name, {})).structured_content
         assert "error" not in payload
 
     server_mod._svc = None
 
 
 @pytest.mark.asyncio
-async def test_server_v2_briefing_defaults_to_fast(tmp_path, monkeypatch):
+async def test_fastmcp_briefing_defaults_to_fast(tmp_path, monkeypatch):
     import evermind_mcp.server_v2 as server_mod
 
     cfg = EverMindConfig(
@@ -418,10 +420,11 @@ async def test_server_v2_briefing_defaults_to_fast(tmp_path, monkeypatch):
 
     svc.llm.summarize_briefing = fail_if_called
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
 
-    result_text = await server_mod.call_tool("briefing", {})
-    payload = json.loads(result_text[0].text)
+    payload = (await server_mod.mcp.call_tool("briefing", {})).structured_content
 
     assert payload["fast"] is True
     assert called is False

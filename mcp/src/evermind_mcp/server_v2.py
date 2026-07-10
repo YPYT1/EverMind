@@ -15,8 +15,8 @@ from urllib.parse import unquote, urlparse
 
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_context
 from fastmcp.tools import FunctionTool
-from mcp.server.lowlevel import Server
 from mcp import types
 
 from basic_memory.mcp.prompts.continue_conversation import continue_conversation
@@ -53,8 +53,6 @@ from .codebase_engine import CODEBASE_TOOL_NAMES
 from .tool_errors import tool_error_response
 
 logger = logging.getLogger(__name__)
-
-server = Server("evermind-mcp")
 
 _svc: MemoryService | None = None
 _last_roots_space: str | None = None
@@ -561,12 +559,6 @@ CANDIDATE_TOOL_SCHEMAS: dict[str, dict] = {
     },
 }
 
-TOOLS: list[types.Tool] = [
-    *MEMORY_TOOLS,
-    *[_tool(name, CODEBASE_TOOL_SCHEMAS[name]) for name in sorted(CODEBASE_TOOL_NAMES)],
-    *[_tool(name, CANDIDATE_TOOL_SCHEMAS[name]) for name in sorted(ARCHIVE_TOOL_NAMES)],
-]
-
 BASIC_TOOL_FUNCTIONS = (
     build_context,
     canvas,
@@ -600,19 +592,16 @@ FAST_CORE_TOOLS = [
 # ---------------------------------------------------------------------------
 
 
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return TOOLS
-
-
-async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent]:
+async def _dispatch_core_tool(
+    name: str, arguments: dict | None, context: Context | None = None
+) -> dict:
     args = arguments or {}
 
     try:
         if _svc is None:
             raise RuntimeError("MemoryService not initialised")
 
-        await _maybe_update_space_from_roots()
+        await _maybe_update_space_from_roots(context)
 
         if name == "remember":
             result = await _svc.remember(
@@ -729,34 +718,16 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
             hint="Check the tool input schema and EverMind logs for details.",
         )
 
-    return [
-        types.TextContent(
-            type="text",
-            text=json.dumps(result, ensure_ascii=False, indent=2),
-        )
-    ]
-
-
-@server.call_tool()
-async def _mcp_call_tool(name: str, arguments: dict | None) -> types.CallToolResult:
-    """Expose protocol error state while retaining the direct-call adapter."""
-    content = await call_tool(name, arguments)
-    try:
-        structured = json.loads(content[0].text)
-    except (IndexError, json.JSONDecodeError):
-        structured = None
-    is_error = isinstance(structured, dict) and structured.get("ok") is False
-    return types.CallToolResult(
-        content=content,
-        structuredContent=structured,
-        isError=is_error,
-    )
+    return result
 
 
 def _fast_core_tool(tool: types.Tool) -> FunctionTool:
     async def invoke(**arguments):
-        content = await call_tool(tool.name, arguments)
-        result = json.loads(content[0].text)
+        try:
+            context = get_context()
+        except RuntimeError:
+            context = None
+        result = await _dispatch_core_tool(tool.name, arguments, context)
         if isinstance(result, dict) and result.get("ok") is False:
             raise ToolError(json.dumps(result, ensure_ascii=False))
         return result
@@ -1074,26 +1045,19 @@ def main_sync() -> None:
     asyncio.run(main())
 
 
-async def _maybe_update_space_from_roots() -> None:
+async def _maybe_update_space_from_roots(context: Context | None = None) -> None:
     """Use MCP client roots for project-space detection when available."""
     global _last_roots_space
     if _svc is None:
         return
     if os.environ.get("EVERMIND_DEFAULT_SPACE"):
         return
+    if context is None:
+        return
     try:
-        session = server.request_context.session
-        client_params = session.client_params
-        if (
-            client_params is None
-            or client_params.capabilities is None
-            or client_params.capabilities.roots is None
-        ):
-            return
-        roots_result = await session.list_roots()
+        roots = await context.list_roots()
     except Exception:
         return
-    roots = getattr(roots_result, "roots", None) or []
     if not roots:
         return
     root_path = _root_uri_to_path(str(roots[0].uri))

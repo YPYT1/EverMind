@@ -258,7 +258,8 @@ def test_offline_mode():
 def test_mcp_tools():
     import importlib
     server_mod = importlib.import_module("evermind_mcp.server_v2")
-    tool_names = {t.name for t in server_mod.TOOLS}
+    tools = asyncio.run(server_mod.mcp.list_tools())
+    tool_names = {tool.name for tool in tools}
     required = {
         "remember",
         "update_memory",
@@ -287,17 +288,17 @@ def test_mcp_tools():
     }
     missing = required - tool_names
     assert not missing, f"Missing MCP tools: {missing}"
-    assert len(tool_names) == 42, f"Expected 42 unified MCP tools, got {len(tool_names)}"
-    for tool in server_mod.TOOLS:
+    assert len(tool_names) == 50, f"Expected 50 unified MCP tools, got {len(tool_names)}"
+    for tool in tools:
         assert tool.description, f"Tool {tool.name} missing description"
-        assert tool.inputSchema,  f"Tool {tool.name} missing inputSchema"
-    recall_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "recall")
-    briefing_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "briefing")
-    update_schema = next(t.inputSchema for t in server_mod.TOOLS if t.name == "update_memory")
+        assert tool.parameters, f"Tool {tool.name} missing input schema"
+    recall_schema = next(t.parameters for t in tools if t.name == "recall")
+    briefing_schema = next(t.parameters for t in tools if t.name == "briefing")
+    update_schema = next(t.parameters for t in tools if t.name == "update_memory")
     assert "min_score" in recall_schema["properties"], "recall must expose min_score"
     assert "fast" in briefing_schema["properties"], "briefing must expose fast"
     assert "content" in update_schema["properties"], "update_memory must expose content"
-    ok("Scenario 11 — MCP tools: all 42 unified tools registered with description and schema")
+    ok("Scenario 11 — MCP tools: all 50 unified tools registered with description and schema")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

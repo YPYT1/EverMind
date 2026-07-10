@@ -179,7 +179,7 @@ def test_vendored_source_manifest_matches_current_source_trees() -> None:
         )
 
 
-def test_legacy_archive_dispatch_is_removed() -> None:
+def test_legacy_mcp_and_archive_dispatch_are_removed() -> None:
     import evermind_mcp.server_v2 as server_mod
 
     assert archive_bridge.ARCHIVE_TOOL_NAMES == {
@@ -187,13 +187,40 @@ def test_legacy_archive_dispatch_is_removed() -> None:
         "commit_basic_memory_update",
     }
     assert not hasattr(archive_bridge, "_fast_write_note")
-    legacy_names = {tool.name for tool in server_mod.TOOLS}
-    assert {
-        "write_note",
-        "search_notes",
-        "schema_validate",
-        "list_workspaces",
-    }.isdisjoint(legacy_names)
+    for name in ("server", "TOOLS", "list_tools", "call_tool"):
+        assert not hasattr(server_mod, name)
+
+
+@pytest.mark.asyncio
+async def test_fastmcp_roots_update_the_unified_project(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import evermind_mcp.server_v2 as server_mod
+
+    repo = tmp_path / "workspace"
+    repo.mkdir()
+    monkeypatch.delenv("EVERMIND_DEFAULT_SPACE", raising=False)
+    service = MemoryService(_config(tmp_path, space="coding:bootstrap"))
+
+    class RootContext:
+        async def list_roots(self):
+            return [types.Root(uri=repo.as_uri())]
+
+    server_mod._svc = service
+    server_mod._last_roots_space = None
+    try:
+        await server_mod._maybe_update_space_from_roots(RootContext())
+
+        workspace = service.storage.conn.execute(
+            "SELECT project_id, workspace_id FROM workspaces WHERE canonical_path=?",
+            (str(repo.resolve()).replace("\\", "/").casefold(),),
+        ).fetchone()
+        assert workspace is not None
+        assert service.space == workspace["project_id"]
+        assert service.workspace_id == workspace["workspace_id"]
+    finally:
+        server_mod._svc = None
+        service.close()
 
 
 def test_vendored_manifest_matches_binary_and_offline_fixture() -> None:
@@ -265,40 +292,6 @@ def test_candidate_id_cannot_escape_candidate_directory(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert result["code"] == "ARCHIVE_INVALID_ARGUMENT"
     assert not outside_target.exists()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("tool_name", "arguments"),
-    [
-        ("not_a_tool", {}),
-        ("read_note", {"identifier": "missing", "project": "test"}),
-    ],
-)
-async def test_application_failure_sets_mcp_is_error(
-    tmp_path: Path,
-    monkeypatch,
-    tool_name: str,
-    arguments: dict,
-) -> None:
-    import evermind_mcp.server_v2 as server_mod
-
-    service = MemoryService(_config(tmp_path))
-    server_mod._svc = service
-    monkeypatch.setattr(
-        server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0)
-    )
-    request = types.CallToolRequest(
-        params=types.CallToolRequestParams(name=tool_name, arguments=arguments)
-    )
-    try:
-        response = await server_mod.server.request_handlers[types.CallToolRequest](
-            request
-        )
-        assert response.root.isError is True
-    finally:
-        server_mod._svc = None
-        service.storage.close_all()
 
 
 def test_memory_service_close_stops_its_workers(tmp_path: Path) -> None:
@@ -1923,12 +1916,15 @@ async def test_update_preserves_superseded_fact_version(tmp_path: Path) -> None:
         service.storage.close_all()
 
 
+@pytest.mark.asyncio
 @pytest.mark.xfail(strict=True, reason="recall has no explicit expired-history switch")
-def test_recall_schema_exposes_include_expired() -> None:
+async def test_recall_schema_exposes_include_expired() -> None:
     import evermind_mcp.server_v2 as server_mod
 
-    recall = next(tool for tool in server_mod.TOOLS if tool.name == "recall")
-    assert recall.inputSchema["properties"].get("include_expired") == {
+    recall = next(
+        tool for tool in await server_mod.mcp.list_tools() if tool.name == "recall"
+    )
+    assert recall.parameters["properties"].get("include_expired") == {
         "type": "boolean",
         "default": False,
     }

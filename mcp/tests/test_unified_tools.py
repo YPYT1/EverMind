@@ -16,8 +16,10 @@ from evermind_mcp.vendored_codebase import EXPECTED_TREE_SITTER_GRAMMAR_COUNT, R
 from evermind_mcp.memory_service_v2 import MemoryService
 
 
-def _parse(text_contents) -> dict:
-    return json.loads(text_contents[0].text)
+async def _call_registered(server_mod, name: str, arguments: dict) -> dict:
+    result = await server_mod.mcp.call_tool(name, arguments)
+    assert result.structured_content is not None
+    return result.structured_content
 
 
 def _write_minimal_vendored_codebase_source(source: Path) -> None:
@@ -65,65 +67,21 @@ async def test_server_dispatches_codebase_tools(tmp_path, monkeypatch):
     )
     svc = MemoryService(cfg)
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
     monkeypatch.setattr(
         svc.codebase,
         "call",
         lambda name, args: {"ok": True, "engine": "evermind-code-graph", "tool": name, "args": args},
     )
-    codebase = _parse(
-        await server_mod.call_tool(
-            "search_code",
-            {"project": "D-Project-EverMind", "pattern": "server_v2"},
-        )
+    codebase = await _call_registered(
+        server_mod,
+        "search_code",
+        {"project": "D-Project-EverMind", "pattern": "server_v2"},
     )
     assert codebase["engine"] == "evermind-code-graph"
     assert codebase["tool"] == "search_code"
-    server_mod._svc = None
-
-
-@pytest.mark.asyncio
-async def test_server_missing_required_argument_returns_clean_error(tmp_path, monkeypatch, caplog):
-    import evermind_mcp.server_v2 as server_mod
-
-    cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-    )
-    svc = MemoryService(cfg)
-    server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
-
-    with caplog.at_level("ERROR", logger="evermind_mcp.server_v2"):
-        result = _parse(await server_mod.call_tool("recall", {}))
-
-    assert result["ok"] is False
-    assert result["code"] == "MCP_INVALID_ARGUMENT"
-    assert result["message"] == "missing required argument: query"
-    assert "Tool recall failed" not in caplog.text
-    server_mod._svc = None
-
-
-@pytest.mark.asyncio
-async def test_server_unknown_tool_returns_machine_readable_error(tmp_path, monkeypatch):
-    import evermind_mcp.server_v2 as server_mod
-
-    cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-        embed_enabled=False,
-        rerank_enabled=False,
-    )
-    svc = MemoryService(cfg)
-    server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
-
-    result = _parse(await server_mod.call_tool("not_a_tool", {}))
-
-    assert result["ok"] is False
-    assert result["code"] == "MCP_UNKNOWN_TOOL"
-    assert result["message"] == "unknown MCP tool: not_a_tool"
-    assert result["retryable"] is False
     server_mod._svc = None
 
 
@@ -206,19 +164,22 @@ async def test_server_dispatches_update_memory(tmp_path, monkeypatch):
     )
     svc = MemoryService(cfg)
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
 
-    remembered = _parse(await server_mod.call_tool("remember", {"content": "wrong module auth.ts"}))
-    updated = _parse(
-        await server_mod.call_tool(
-            "update_memory",
-            {
-                "id": remembered["id"],
-                "content": "correct module ipcManager.ts",
-                "tags": ["codebase-verified"],
-                "meta": {"source": "codebase"},
-            },
-        )
+    remembered = await _call_registered(
+        server_mod, "remember", {"content": "wrong module auth.ts"}
+    )
+    updated = await _call_registered(
+        server_mod,
+        "update_memory",
+        {
+            "id": remembered["id"],
+            "content": "correct module ipcManager.ts",
+            "tags": ["codebase-verified"],
+            "meta": {"source": "codebase"},
+        },
     )
 
     assert updated["updated"] is True
