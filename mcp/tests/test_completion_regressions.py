@@ -179,6 +179,41 @@ def test_vendored_source_manifest_matches_current_source_trees() -> None:
         )
 
 
+def test_vendored_basic_memory_base_dependencies_are_local_only() -> None:
+    pyproject = tomllib.loads(
+        (ROOT / "third_party" / "basic-memory" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    dependencies = pyproject["project"]["dependencies"]
+    names = {
+        dependency.split("[", 1)[0]
+        .split("<", 1)[0]
+        .split(">", 1)[0]
+        .split("=", 1)[0]
+        .strip()
+        .casefold()
+        for dependency in dependencies
+    }
+
+    assert {
+        "asyncpg",
+        "fastembed",
+        "litellm",
+        "mdformat",
+        "mdformat-frontmatter",
+        "mdformat-gfm",
+        "nest-asyncio",
+        "openai",
+        "psycopg",
+        "pyright",
+        "pytest-aio",
+        "pytest-asyncio",
+        "uvloop",
+    }.isdisjoint(names)
+    assert not any(dependency.startswith("fastapi[standard]") for dependency in dependencies)
+
+
 def test_legacy_mcp_and_archive_dispatch_are_removed() -> None:
     import evermind_mcp.server_v2 as server_mod
 
