@@ -49,6 +49,7 @@ from basic_memory.mcp.tools import (
 
 from .memory_service_v2 import MemoryService
 from .archive_engine import ARCHIVE_TOOL_NAMES, archive_project_path
+from .bundle_manifest import verify_official_bundle
 from .codebase_engine import CODEBASE_TOOL_NAMES
 from .tool_errors import tool_error_response
 
@@ -1042,6 +1043,7 @@ mcp.resource(
 
 
 async def main() -> None:
+    verify_official_bundle()
     await mcp.run_async(transport="stdio", show_banner=False)
 
 
