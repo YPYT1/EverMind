@@ -56,6 +56,21 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
             "official bundle manifest does not contain the package"
         ) from exc
 
+    expected_manifest_hash = marker.get("manifest_sha256")
+    if (
+        not isinstance(expected_manifest_hash, str)
+        or not _SHA256_PATTERN.fullmatch(expected_manifest_hash)
+    ):
+        raise BundleIntegrityError("official bundle manifest hash is invalid")
+    try:
+        actual_manifest_hash = _sha256(manifest_path)
+    except OSError as exc:
+        raise BundleIntegrityError(
+            f"cannot read runtime manifest: {manifest_path}"
+        ) from exc
+    if actual_manifest_hash != expected_manifest_hash:
+        raise BundleIntegrityError("official bundle manifest hash mismatch")
+
     manifest = _read_json(manifest_path, "runtime manifest")
     if manifest.get("schema_version") != 1 or manifest.get("product") != "EverMind":
         raise BundleIntegrityError("unsupported EverMind runtime manifest")

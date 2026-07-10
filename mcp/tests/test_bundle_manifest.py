@@ -25,6 +25,23 @@ def _bundle_module():
     return importlib.import_module("evermind_mcp.bundle_manifest")
 
 
+def _write_manifest(package_dir: Path, manifest_path: Path, manifest: dict) -> None:
+    manifest_bytes = (
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    manifest_path.write_bytes(manifest_bytes)
+    (package_dir / "_official_bundle.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "manifest": "../../evermind-runtime-manifest.json",
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_bundle(tmp_path: Path) -> tuple[Path, Path, dict]:
     bundle_root = tmp_path / "EverMind"
     package_dir = bundle_root / "app" / "evermind_mcp"
@@ -49,16 +66,7 @@ def _write_bundle(tmp_path: Path) -> tuple[Path, Path, dict]:
         "files": entries,
     }
     manifest_path = bundle_root / "evermind-runtime-manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    (package_dir / "_official_bundle.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "manifest": "../../evermind-runtime-manifest.json",
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_manifest(package_dir, manifest_path, manifest)
     return package_dir, manifest_path, manifest
 
 
@@ -90,6 +98,27 @@ def test_official_bundle_rejects_tampered_file(tmp_path: Path) -> None:
         module.verify_official_bundle(package_dir)
 
 
+def test_official_bundle_rejects_tampered_manifest(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, manifest_path, _ = _write_bundle(tmp_path)
+    manifest_path.write_bytes(manifest_path.read_bytes() + b" ")
+
+    with pytest.raises(module.BundleIntegrityError, match="manifest hash mismatch"):
+        module.verify_official_bundle(package_dir)
+
+
+def test_official_bundle_marker_requires_manifest_hash(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, _, _ = _write_bundle(tmp_path)
+    marker_path = package_dir / "_official_bundle.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker.pop("manifest_sha256")
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    with pytest.raises(module.BundleIntegrityError, match="manifest hash is invalid"):
+        module.verify_official_bundle(package_dir)
+
+
 def test_official_bundle_rejects_manifest_path_escape(tmp_path: Path) -> None:
     module = _bundle_module()
     package_dir, manifest_path, manifest = _write_bundle(tmp_path)
@@ -103,7 +132,7 @@ def test_official_bundle_rejects_manifest_path_escape(tmp_path: Path) -> None:
             "sha256": hashlib.sha256(outside.read_bytes()).hexdigest(),
         }
     )
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _write_manifest(package_dir, manifest_path, manifest)
 
     with pytest.raises(module.BundleIntegrityError, match="escapes bundle root"):
         module.verify_official_bundle(package_dir)
@@ -115,7 +144,7 @@ def test_official_bundle_requires_every_runtime_component(tmp_path: Path) -> Non
     manifest["files"] = [
         entry for entry in manifest["files"] if entry["component"] != "license"
     ]
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _write_manifest(package_dir, manifest_path, manifest)
 
     with pytest.raises(module.BundleIntegrityError, match="missing required components"):
         module.verify_official_bundle(package_dir)
