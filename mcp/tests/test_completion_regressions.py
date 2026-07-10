@@ -1900,11 +1900,10 @@ def test_same_name_repositories_receive_distinct_workspace_ids(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="value changes are not recognized as conflicts")
 async def test_value_conflicts_are_explicitly_surfaced(tmp_path: Path) -> None:
     service = MemoryService(_config(tmp_path))
     try:
-        await service.remember(
+        original = await service.remember(
             "The deployment port is 8080", importance=1, tags=["deployment"]
         )
         conflicting = await service.remember(
@@ -1914,6 +1913,90 @@ async def test_value_conflicts_are_explicitly_surfaced(tmp_path: Path) -> None:
         )
 
         assert conflicting["conflicts"]
+        conflict = conflicting["conflicts"][0]
+        assert conflict["type"] == "value_mismatch"
+        assert conflict["claim_key"] == "deployment port"
+        assert {item["value"] for item in conflict["values"]} == {"8080", "9090"}
+
+        recalled = await service.recall(
+            "deployment port", mode="fts", min_score=0
+        )
+        assert recalled["conflicts"][0]["conflict_id"] == conflict["conflict_id"]
+        stored = service.storage.conn.execute(
+            "SELECT claim_key, state FROM memory_conflicts WHERE conflict_id=?",
+            (conflict["conflict_id"],),
+        ).fetchone()
+        members = service.storage.conn.execute(
+            "SELECT memory_id FROM memory_conflict_members WHERE conflict_id=?",
+            (conflict["conflict_id"],),
+        ).fetchall()
+        assert dict(stored) == {"claim_key": "value:deployment port", "state": "open"}
+        assert {row["memory_id"] for row in members} == {
+            original["id"],
+            conflicting["id"],
+        }
+    finally:
+        service.storage.close_all()
+
+
+@pytest.mark.asyncio
+async def test_verified_new_value_outranks_old_value(tmp_path: Path) -> None:
+    service = MemoryService(_config(tmp_path))
+    try:
+        old = await service.remember("The deployment port is 8080", importance=2)
+        current = await service.remember(
+            "The deployment port is 9090",
+            importance=1,
+            tags=["verified"],
+            meta={"verified_at": "2026-07-11T00:00:00Z"},
+        )
+
+        recalled = await service.recall(
+            "deployment port", mode="fts", limit=2, min_score=0
+        )
+
+        assert recalled["results"][0]["id"] == current["id"]
+        assert recalled["results"][0]["verified"] is True
+        assert recalled["results"][1]["id"] == old["id"]
+        assert recalled["conflicts"][0]["type"] == "value_mismatch"
+    finally:
+        service.storage.close_all()
+
+
+@pytest.mark.asyncio
+async def test_chinese_value_conflicts_are_surfaced(tmp_path: Path) -> None:
+    service = MemoryService(_config(tmp_path))
+    try:
+        await service.remember("部署端口是8080", importance=1)
+        conflicting = await service.remember("部署端口是9090", importance=1)
+
+        assert conflicting["conflicts"][0]["claim_key"] == "部署端口"
+        assert {item["value"] for item in conflicting["conflicts"][0]["values"]} == {
+            "8080",
+            "9090",
+        }
+    finally:
+        service.storage.close_all()
+
+
+@pytest.mark.asyncio
+async def test_forgetting_a_conflicting_claim_resolves_its_conflict_set(
+    tmp_path: Path,
+) -> None:
+    service = MemoryService(_config(tmp_path))
+    try:
+        await service.remember("The deployment port is 8080", importance=1)
+        conflicting = await service.remember(
+            "The deployment port is 9090", importance=1
+        )
+        conflict_id = conflicting["conflicts"][0]["conflict_id"]
+
+        await service.forget(conflicting["id"])
+
+        conflict = service.storage.conn.execute(
+            "SELECT state FROM memory_conflicts WHERE conflict_id=?", (conflict_id,)
+        ).fetchone()
+        assert conflict["state"] == "resolved"
     finally:
         service.storage.close_all()
 

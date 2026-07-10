@@ -276,6 +276,8 @@ class EmbeddedStorage:
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_remote
                     ON projects(remote_fingerprint) WHERE remote_fingerprint IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS idx_memory_sources_project ON memory_sources(project_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_conflicts_claim_key
+                    ON memory_conflicts(claim_key);
             """)
             c.commit()
 
@@ -723,6 +725,78 @@ class EmbeddedStorage:
         ).fetchall()
         return [row["project_id"] for row in rows]
 
+    def find_active_memories_containing(
+        self, text: str, limit: int = 20
+    ) -> list[MemoryRow]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE state='active'
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND instr(lower(content), lower(?)) > 0
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (self._now_ms(), text, limit),
+        ).fetchall()
+        return [self._row_to_memory(row) for row in rows]
+
+    def record_memory_conflict(
+        self,
+        conflict_id: str,
+        claim_key: str,
+        memory_ids: list[str],
+    ) -> str | None:
+        members = sorted(set(filter(None, memory_ids)))
+        if len(members) < 2:
+            return None
+        now = self._now_ms()
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memory_conflicts
+                        (conflict_id, claim_key, state, created_at, updated_at)
+                    VALUES (?, ?, 'open', ?, ?)
+                    ON CONFLICT(conflict_id) DO UPDATE SET
+                        state='open', updated_at=excluded.updated_at
+                    """,
+                    (conflict_id, claim_key, now, now),
+                )
+                for memory_id in members:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO memory_conflict_members
+                            (conflict_id, memory_id)
+                        SELECT ?, id FROM memories WHERE id=?
+                        """,
+                        (conflict_id, memory_id),
+                    )
+                self._resolve_orphaned_conflicts(conn, now)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return conflict_id
+
+    @staticmethod
+    def _resolve_orphaned_conflicts(
+        conn: sqlite3.Connection, updated_at: int
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE memory_conflicts
+            SET state='resolved', updated_at=?
+            WHERE state='open' AND (
+                SELECT COUNT(*) FROM memory_conflict_members member
+                WHERE member.conflict_id=memory_conflicts.conflict_id
+            ) < 2
+            """,
+            (updated_at,),
+        )
+
     @staticmethod
     def _fts_query(text: str) -> str:
         """Wrap each token in double-quotes so FTS5 treats them as literals.
@@ -1097,6 +1171,7 @@ class EmbeddedStorage:
                     )
                 self._delete_graph_edges_for_memory(memory_id)
             cursor = self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+            self._resolve_orphaned_conflicts(self.conn, self._now_ms())
             self.conn.commit()
         return cursor.rowcount > 0
 
@@ -1127,6 +1202,16 @@ class EmbeddedStorage:
                 """,
                 (space, now),
             )
+            self.conn.execute(
+                """
+                DELETE FROM memory_conflict_members
+                WHERE memory_id IN (
+                    SELECT id FROM memories WHERE space=? AND state='expired'
+                )
+                """,
+                (space,),
+            )
+            self._resolve_orphaned_conflicts(self.conn, now)
             self.conn.commit()
         return cursor.rowcount
 
@@ -1588,6 +1673,11 @@ class EmbeddedStorage:
                     """,
                     (now, now, memory_id),
                 )
+                conn.execute(
+                    "DELETE FROM memory_conflict_members WHERE memory_id=?",
+                    (memory_id,),
+                )
+                self._resolve_orphaned_conflicts(conn, now)
                 self._delete_graph_edges_for_memory(memory_id)
                 conn.commit()
             except Exception:

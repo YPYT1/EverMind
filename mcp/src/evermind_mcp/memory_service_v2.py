@@ -11,6 +11,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from collections import deque
 from collections.abc import Awaitable, Callable
 
@@ -80,6 +81,43 @@ ENTITY_PATTERN = re.compile(
     r"[\w./\\-]+\.(?:py|ts|tsx|js|jsx|cts|mts|vue|go|rs|java|cs|cpp|c|h|md|json|toml|yaml|yml)|"
     r"\b[A-Z][A-Za-z0-9_]{2,}\b"
 )
+VALUE_CLAIM_PATTERN = re.compile(
+    r"^\s*(?P<key>.{2,80}?)\s*(?:\bis\b|\bare\b|=|为|是)\s*"
+    r"(?P<value>[^\r\n]{1,120})\s*$",
+    re.IGNORECASE,
+)
+VALUE_CLAIM_STOP_KEYS = {"it", "this", "that", "there", "这里", "这个", "它"}
+
+
+def _normalize_claim_part(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = " ".join(normalized.strip().split()).casefold()
+    return normalized.strip(" `\"'.,;:：。")
+
+
+def _value_claim(content: str) -> tuple[str, str] | None:
+    match = VALUE_CLAIM_PATTERN.match(content or "")
+    if match is None:
+        return None
+    key = _normalize_claim_part(match.group("key"))
+    key = re.sub(r"^(?:the|a|an)\s+", "", key)
+    value = _normalize_claim_part(match.group("value"))
+    if not key or not value or key in VALUE_CLAIM_STOP_KEYS:
+        return None
+    return key, value
+
+
+def _conflict_id(claim_key: str) -> str:
+    return hashlib.sha256(claim_key.encode("utf-8")).hexdigest()
+
+
+def _value_conflict_keys(memories: list[dict]) -> set[str]:
+    values: dict[str, set[str]] = {}
+    for memory in memories:
+        claim = _value_claim(memory.get("content", ""))
+        if claim is not None:
+            values.setdefault(claim[0], set()).add(claim[1])
+    return {key for key, claim_values in values.items() if len(claim_values) > 1}
 
 
 def _detect_memory_type(content: str, importance: int) -> str:
@@ -661,7 +699,6 @@ class MemoryService:
 
         # Insert new memory
         meta = dict(meta or {})
-        conflicts = self._detect_conflicts(content, tags or [], meta)
         memory, inserted = self.storage.insert_memory_atomic(
             content=content,
             space=space,
@@ -702,6 +739,15 @@ class MemoryService:
                 logger.debug(
                     "Graph: linked %d entities to memory %s", len(entities), memory.id
                 )
+
+        conflicts = self._detect_conflicts(
+            content,
+            tags or [],
+            meta,
+            memory_id=memory.id,
+            importance=importance,
+        )
+        self._persist_conflicts(conflicts)
 
         # Trigger briefing refresh in background if important enough
         if importance >= 1:
@@ -1032,7 +1078,14 @@ class MemoryService:
                         updated.id, updated.space, entities
                     )
 
-        conflicts = self._detect_conflicts(updated.content, updated.tags, updated.meta)
+        conflicts = self._detect_conflicts(
+            updated.content,
+            updated.tags,
+            updated.meta,
+            memory_id=updated.id,
+            importance=updated.importance,
+        )
+        self._persist_conflicts(conflicts)
         self.storage.log_event(
             updated.space,
             "memory_superseded" if updated.id != memory_id else "memory_updated",
@@ -1527,6 +1580,9 @@ class MemoryService:
         for result, memory in zip(results, ordered, strict=False):
             result["verified"] = self._is_verified(memory.to_dict())
             result["conflict_role"] = self._fact_polarity(memory.content)
+            claim = _value_claim(memory.content)
+            result["claim_key"] = claim[0] if claim else None
+            result["claim_value"] = claim[1] if claim else None
             result["source_projects"] = self.storage.source_projects(memory.id)
         conflicts = self._detect_conflicts_in_dicts(results, query=query)
         return results, conflicts
@@ -1535,6 +1591,9 @@ class MemoryService:
         conflict_entities = self._conflict_entities(
             [m.to_dict() for m in memories], query
         )
+        value_conflict_keys = _value_conflict_keys(
+            [m.to_dict() for m in memories]
+        )
 
         def priority(memory) -> tuple:
             data = memory.to_dict()
@@ -1542,9 +1601,14 @@ class MemoryService:
             verified = self._is_verified(data)
             polarity = self._fact_polarity(data.get("content", ""))
             verified_negative = verified and polarity == "negative" and entity_hit
+            claim = _value_claim(data.get("content", ""))
+            value_conflict = bool(claim and claim[0] in value_conflict_keys)
             return (
                 1 if verified_negative else 0,
+                1 if verified and value_conflict else 0,
                 1 if verified and entity_hit else 0,
+                1 if value_conflict else 0,
+                memory.updated_at if value_conflict else 0,
                 memory.importance,
                 memory.score,
                 memory.updated_at,
@@ -1552,26 +1616,45 @@ class MemoryService:
 
         return sorted(memories, key=priority, reverse=True)
 
-    def _detect_conflicts(self, content: str, tags: list, meta: dict) -> list[dict]:
+    def _detect_conflicts(
+        self,
+        content: str,
+        tags: list,
+        meta: dict,
+        *,
+        memory_id: str | None = None,
+        importance: int = 0,
+    ) -> list[dict]:
         entities = _entities(content)
         polarity = self._fact_polarity(content)
-        if not entities or polarity == "unknown":
+        value_claim = _value_claim(content)
+        if (not entities or polarity == "unknown") and value_claim is None:
             return []
-        rows = []
-        for entity in entities:
-            for item in self.storage.search_graph(self.space, entity, limit=10):
-                memory = item.get("memory") if isinstance(item, dict) else None
-                if isinstance(memory, dict):
-                    rows.append(memory)
+        rows_by_key: dict[str, dict] = {}
+        if polarity != "unknown":
+            for entity in entities:
+                for item in self.storage.search_graph(self.space, entity, limit=10):
+                    memory = item.get("memory") if isinstance(item, dict) else None
+                    if isinstance(memory, dict) and memory.get("id") != memory_id:
+                        key = str(memory.get("id") or memory.get("content"))
+                        rows_by_key[key] = memory
+        if value_claim is not None:
+            for candidate in self.storage.find_active_memories_containing(
+                value_claim[0], limit=20
+            ):
+                if candidate.id != memory_id:
+                    rows_by_key[candidate.id] = candidate.to_dict()
         new_memory = {
-            "id": None,
+            "id": memory_id,
             "content": content,
             "tags": tags,
             "meta": meta,
-            "importance": 0,
+            "importance": importance,
             "score": 0,
         }
-        return self._detect_conflicts_in_dicts([new_memory, *rows], query=content)
+        return self._detect_conflicts_in_dicts(
+            [new_memory, *rows_by_key.values()], query=content
+        )
 
     def _detect_conflicts_in_dicts(
         self, memories: list[dict], *, query: str
@@ -1599,8 +1682,11 @@ class MemoryService:
             if pair_key in seen:
                 continue
             seen.add(pair_key)
+            storage_claim_key = f"code:{entity}"
             conflicts.append(
                 {
+                    "conflict_id": _conflict_id(storage_claim_key),
+                    "claim_key": entity,
                     "entity": entity,
                     "type": "code_fact_contradiction",
                     "negative": [_conflict_item(item) for item in negative],
@@ -1611,7 +1697,61 @@ class MemoryService:
                     "suggestion": "Prefer codebase-verified negative facts; review and forget stale positive memories.",
                 }
             )
+
+        value_claims: dict[str, dict[str, list[dict]]] = {}
+        for memory in memories:
+            claim = _value_claim(memory.get("content", ""))
+            if claim is None:
+                continue
+            key, value = claim
+            value_claims.setdefault(key, {}).setdefault(value, []).append(memory)
+        for key in sorted(value_claims):
+            by_value = value_claims[key]
+            if len(by_value) < 2:
+                continue
+            storage_claim_key = f"value:{key}"
+            conflicts.append(
+                {
+                    "conflict_id": _conflict_id(storage_claim_key),
+                    "claim_key": key,
+                    "type": "value_mismatch",
+                    "values": [
+                        {
+                            "value": value,
+                            "claims": [_conflict_item(item) for item in by_value[value]],
+                        }
+                        for value in sorted(by_value)
+                    ],
+                    "verified_values": [
+                        value
+                        for value in sorted(by_value)
+                        if any(self._is_verified(item) for item in by_value[value])
+                    ],
+                    "unresolved": True,
+                    "suggestion": "Prefer verified current evidence; review conflicting values before superseding either claim.",
+                }
+            )
         return conflicts
+
+    def _persist_conflicts(self, conflicts: list[dict]) -> None:
+        for conflict in conflicts:
+            if conflict.get("type") == "value_mismatch":
+                members = [
+                    claim.get("id")
+                    for value in conflict.get("values", [])
+                    for claim in value.get("claims", [])
+                ]
+                claim_key = f"value:{conflict['claim_key']}"
+            else:
+                members = [
+                    item.get("id")
+                    for group in ("negative", "positive")
+                    for item in conflict.get(group, [])
+                ]
+                claim_key = f"code:{conflict['claim_key']}"
+            self.storage.record_memory_conflict(
+                conflict["conflict_id"], claim_key, members
+            )
 
     def _conflict_entities(self, memories: list[dict], query: str) -> set[str]:
         entity_to_polarities: dict[str, set[str]] = {}
