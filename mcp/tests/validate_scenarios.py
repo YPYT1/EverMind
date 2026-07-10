@@ -345,12 +345,15 @@ def test_single_install_command():
     assert "--extra full" in mac_script, "setup-macos.sh must use --extra full"
     assert "install-all.ps1" in win_script, "setup-windows.ps1 must install integrated engines"
     assert "install-all.sh" in mac_script, "setup-macos.sh must install integrated engines"
-    assert "v0.9.0" in win_all_script, "Windows install-all must install codebase-memory-mcp v0.9.0"
-    assert "v0.9.0" in mac_all_script, "macOS install-all must install codebase-memory-mcp v0.9.0"
+    for marker in ("InstallExternalEngines", "INSTALL_EXTERNAL_ENGINES", "basic-memory=="):
+        assert marker not in win_all_script, f"Windows install-all must not install external engine: {marker}"
+        assert marker not in mac_all_script, f"macOS install-all must not install external engine: {marker}"
     assert "class NativeCodebase" in native_codebase, "EverMind must provide native codebase fallback"
-    assert "NativeCodebase(self.config).call" in codebase_engine, "CodebaseEngine must fallback when binary is missing"
+    assert "VendoredCodebase" in codebase_engine, "CodebaseEngine must prefer the vendored CBM engine"
+    assert "NativeCodebase(self.config).call" in codebase_engine, "CodebaseEngine must keep the native fallback"
+    assert (mcp_dir.parent / "third_party" / "codebase-memory-mcp" / "internal" / "cbm" / "lsp_all.c").exists()
 
-    ok("Scenario 13 — single install: EverMind installs or natively provides memory, codebase, and archive engines")
+    ok("Scenario 13 — single install: EverMind natively provides memory, code graph, and archive engines")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

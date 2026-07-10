@@ -8,7 +8,7 @@ import pytest
 import asyncio
 import sys
 
-sys.path.insert(0, 'src')
+sys.path.insert(0, "src")
 
 from evermind_mcp.storage import EmbeddedStorage
 from evermind_mcp.config_v2 import EverMindConfig
@@ -19,6 +19,7 @@ from evermind_mcp.project_detector import _slug_from_url
 # ============================================================================
 # Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def storage(tmp_path):
@@ -32,9 +33,7 @@ def storage(tmp_path):
 def svc(tmp_path):
     """Provide a MemoryService with embedding disabled for faster tests."""
     cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-        embed_enabled=False
+        home=tmp_path, default_space="coding:test", embed_enabled=False
     )
     return MemoryService(cfg)
 
@@ -42,6 +41,7 @@ def svc(tmp_path):
 # ============================================================================
 # TestFTSBoundaries - Full-text search edge cases
 # ============================================================================
+
 
 class TestFTSBoundaries:
     """Test FTS5 query handling for special characters and boundary cases."""
@@ -51,7 +51,7 @@ class TestFTSBoundaries:
         storage.insert_memory(
             space="coding:test",
             content="archive-level content is stored here",
-            layer="archive"
+            layer="archive",
         )
         results = storage.search_fts("archive-level", "coding:test")
         assert len(results) == 1
@@ -62,7 +62,7 @@ class TestFTSBoundaries:
         storage.insert_memory(
             space="coding:test",
             content='The function call: getData("user:123") returns data',
-            layer="episodic"
+            layer="episodic",
         )
         results = storage.search_fts("getData", "coding:test")
         assert len(results) == 1
@@ -70,17 +70,15 @@ class TestFTSBoundaries:
 
     @pytest.mark.xfail(
         reason="SQLite unicode61 tokeniser does not index CJK codepoints by default. "
-               "Chinese content is stored and retrievable via list_memories(), "
-               "but FTS keyword search requires a CJK-aware tokeniser (e.g. jieba). "
-               "This is a known limitation documented in troubleshooting.md.",
+        "Chinese content is stored and retrievable via list_memories(), "
+        "but FTS keyword search requires a CJK-aware tokeniser (e.g. jieba). "
+        "This is a known limitation documented in troubleshooting.md.",
         strict=True,
     )
     def test_fts_chinese_content(self, storage):
         """Chinese FTS is a known limitation of the unicode61 tokeniser."""
         storage.insert_memory(
-            space="coding:test",
-            content="这是一个关于认证模块的记忆",
-            layer="episodic"
+            space="coding:test", content="这是一个关于认证模块的记忆", layer="episodic"
         )
         results = storage.search_fts("认", "coding:test")
         assert len(results) == 1
@@ -88,9 +86,7 @@ class TestFTSBoundaries:
     def test_fts_empty_query(self, storage):
         """Empty query should return empty list, not crash."""
         storage.insert_memory(
-            space="coding:test",
-            content="some content",
-            layer="episodic"
+            space="coding:test", content="some content", layer="episodic"
         )
         results = storage.search_fts("", "coding:test")
         assert results == []
@@ -100,7 +96,7 @@ class TestFTSBoundaries:
         storage.insert_memory(
             space="coding:test",
             content="authentication module uses JWT tokens",
-            layer="episodic"
+            layer="episodic",
         )
         results = storage.search_fts("authentication", "coding:test")
         assert len(results) == 1
@@ -109,14 +105,10 @@ class TestFTSBoundaries:
     def test_fts_layer_filter(self, storage):
         """FTS search with layer filter should return only matching layer."""
         storage.insert_memory(
-            space="coding:test",
-            content="episodic memory about auth",
-            layer="episodic"
+            space="coding:test", content="episodic memory about auth", layer="episodic"
         )
         storage.insert_memory(
-            space="coding:test",
-            content="semantic memory about auth",
-            layer="semantic"
+            space="coding:test", content="semantic memory about auth", layer="semantic"
         )
         results = storage.search_fts("auth", "coding:test", layer="episodic")
         assert len(results) == 1
@@ -128,13 +120,13 @@ class TestFTSBoundaries:
             space="coding:test",
             content="auth module with security tag",
             layer="episodic",
-            tags=["security", "auth"]
+            tags=["security", "auth"],
         )
         storage.insert_memory(
             space="coding:test",
             content="auth module with performance tag",
             layer="episodic",
-            tags=["performance"]
+            tags=["performance"],
         )
         results = storage.search_fts("auth", "coding:test", tags=["security"])
         assert len(results) == 1
@@ -144,6 +136,7 @@ class TestFTSBoundaries:
 # ============================================================================
 # TestDedup - Deduplication logic
 # ============================================================================
+
 
 class TestDedup:
     """Test exact deduplication logic (fuzzy dedup removed in v2)."""
@@ -184,9 +177,13 @@ class TestDedup:
 
     @pytest.mark.asyncio
     async def test_dedup_different_space(self, tmp_path):
-        """Same content in different spaces should both be stored."""
-        cfg1 = EverMindConfig(home=tmp_path, default_space="coding:project1", embed_enabled=False)
-        cfg2 = EverMindConfig(home=tmp_path, default_space="coding:project2", embed_enabled=False)
+        """Same content in different projects should share one canonical memory."""
+        cfg1 = EverMindConfig(
+            home=tmp_path, default_space="coding:project1", embed_enabled=False
+        )
+        cfg2 = EverMindConfig(
+            home=tmp_path, default_space="coding:project2", embed_enabled=False
+        )
         svc1 = MemoryService(cfg1)
         svc2 = MemoryService(cfg2)
 
@@ -195,23 +192,27 @@ class TestDedup:
         result2 = await svc2.remember(content, importance=1)
 
         assert result1["action"] == "stored"
-        assert result2["action"] == "stored"
-        assert result1["id"] != result2["id"]
+        assert result2["action"] == "merged"
+        assert result1["id"] == result2["id"]
+        assert svc1.storage.source_projects(result1["id"]) == [
+            "coding:project1",
+            "coding:project2",
+        ]
 
     def test_dedup_case_sensitive(self, storage):
-        """Exact match dedup should be case-sensitive in SQLite."""
+        """Normalized exact dedup should ignore casing differences."""
         storage.insert_memory(
-            space="coding:test",
-            content="Auth Module",
-            layer="episodic"
+            space="coding:test", content="Auth Module", layer="episodic"
         )
         existing = storage.find_exact("auth module", "coding:test")
-        assert existing is None  # Different case should not match
+        assert existing is not None
+        assert existing.content == "Auth Module"
 
 
 # ============================================================================
 # TestRRFFusion - Reciprocal Rank Fusion scoring
 # ============================================================================
+
 
 class TestRRFFusion:
     """Test RRF hybrid search fusion logic."""
@@ -245,7 +246,9 @@ class TestRRFFusion:
 
         This test requires embedding enabled, so we skip if unavailable.
         """
-        cfg = EverMindConfig(home=tmp_path, default_space="coding:test", embed_enabled=True)
+        cfg = EverMindConfig(
+            home=tmp_path, default_space="coding:test", embed_enabled=True
+        )
         svc = MemoryService(cfg)
 
         if not svc.embedder.available:
@@ -265,6 +268,7 @@ class TestRRFFusion:
 # ============================================================================
 # TestGraphLayer - Entity extraction and graph relationships
 # ============================================================================
+
 
 class TestGraphLayer:
     """Test graph entity extraction and linking."""
@@ -315,6 +319,7 @@ class TestGraphLayer:
 # TestBriefingConfig - Configurable briefing limits
 # ============================================================================
 
+
 class TestBriefingConfig:
     """Test briefing recent/important count configuration."""
 
@@ -325,7 +330,7 @@ class TestBriefingConfig:
             home=tmp_path,
             default_space="coding:test",
             embed_enabled=False,
-            briefing_recent=3
+            briefing_recent=3,
         )
         svc = MemoryService(cfg)
 
@@ -344,7 +349,7 @@ class TestBriefingConfig:
             home=tmp_path,
             default_space="coding:test",
             embed_enabled=False,
-            briefing_important=2
+            briefing_important=2,
         )
         svc = MemoryService(cfg)
 
@@ -359,6 +364,7 @@ class TestBriefingConfig:
 # ============================================================================
 # TestListMemories - List operation filters
 # ============================================================================
+
 
 class TestListMemories:
     """Test memory listing with various filters."""
@@ -404,6 +410,7 @@ class TestListMemories:
 # TestEmbeddingDimProtection - Embedding dimension mismatch handling
 # ============================================================================
 
+
 class TestEmbeddingDimProtection:
     """Test embedding dimension storage and mismatch detection."""
 
@@ -433,7 +440,9 @@ class TestEmbeddingDimProtection:
 
         This test simulates the dimension mismatch scenario.
         """
-        cfg = EverMindConfig(home=tmp_path, default_space="coding:test", embed_enabled=True)
+        cfg = EverMindConfig(
+            home=tmp_path, default_space="coding:test", embed_enabled=True
+        )
 
         # Pre-set dimension in storage
         storage = EmbeddedStorage(cfg.db_path(cfg.default_space))
@@ -459,6 +468,7 @@ class TestEmbeddingDimProtection:
 # ============================================================================
 # TestProjectDetector - Utility function tests
 # ============================================================================
+
 
 class TestProjectDetector:
     """Test project space detection from git URLs."""
@@ -486,6 +496,7 @@ class TestProjectDetector:
 # TestStorageMetadata - Meta key-value operations
 # ============================================================================
 
+
 class TestStorageMetadata:
     """Test storage metadata get/set operations."""
 
@@ -512,15 +523,14 @@ class TestStorageMetadata:
 # TestMemoryExpiry - Working memory expiration
 # ============================================================================
 
+
 class TestMemoryExpiry:
     """Test working memory expiration logic."""
 
     def test_working_memory_expires(self, storage):
         """Working layer memories should have expires_at set."""
         mem = storage.insert_memory(
-            space="coding:test",
-            content="Temporary working memory",
-            layer="working"
+            space="coding:test", content="Temporary working memory", layer="working"
         )
         assert mem.expires_at is not None
         assert mem.expires_at > storage._now_ms()
@@ -528,9 +538,7 @@ class TestMemoryExpiry:
     def test_archive_memory_no_expiry(self, storage):
         """Archive layer memories should not expire."""
         mem = storage.insert_memory(
-            space="coding:test",
-            content="Permanent archive memory",
-            layer="archive"
+            space="coding:test", content="Permanent archive memory", layer="archive"
         )
         assert mem.expires_at is None
 
@@ -540,14 +548,12 @@ class TestMemoryExpiry:
         now = storage._now_ms()
         past_expiry = now - 1000
         storage.insert_memory(
-            space="coding:test",
-            content="Expired memory",
-            layer="working"
+            space="coding:test", content="Expired memory", layer="working"
         )
         # Manually set expiry to past
         storage.conn.execute(
             "UPDATE memories SET expires_at=? WHERE content=?",
-            (past_expiry, "Expired memory")
+            (past_expiry, "Expired memory"),
         )
         storage.conn.commit()
 
@@ -562,6 +568,7 @@ class TestMemoryExpiry:
 # ============================================================================
 # TestMemoryStats - Statistics aggregation
 # ============================================================================
+
 
 class TestMemoryStats:
     """Test memory statistics collection."""
