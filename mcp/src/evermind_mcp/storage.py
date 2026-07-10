@@ -57,7 +57,16 @@ class EmbeddedStorage:
             c = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA busy_timeout=30000")
-            c.execute("PRAGMA journal_mode=WAL")
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    c.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).casefold() or time.monotonic() >= deadline:
+                        c.close()
+                        raise
+                    time.sleep(0.05)
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
             if self._vec_available:
