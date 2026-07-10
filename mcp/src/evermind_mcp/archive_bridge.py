@@ -1,14 +1,11 @@
-"""EverMind bridge for Basic Memory archive tools.
-
-Basic Memory is AGPL-licensed, so EverMind integrates with it through the
-installed CLI process instead of importing or vendoring its Python source.
-"""
+"""EverMind source-fused local archive engine."""
 from __future__ import annotations
 
 import json
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -17,12 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config_v2 import EverMindConfig
-from .tool_bridge import (
-    bridge_error_response,
-    bridge_failure_response,
-    resolve_executable,
-    run_json_command,
-)
+from .tool_errors import tool_error_response
+
+
+ARCHIVE_BACKEND = "source-fused-basic-memory"
+ARCHIVE_LICENSE = "AGPL-3.0-or-later"
 
 
 ARCHIVE_TOOL_NAMES = {
@@ -42,7 +38,7 @@ ARCHIVE_TOOL_NAMES = {
     "commit_basic_memory_update",
 }
 
-_CLI_TOOL_MAP = {
+_LOCAL_ARCHIVE_TOOLS = {
     "write_note": "write-note",
     "read_note": "read-note",
     "delete_note": "delete-note",
@@ -57,60 +53,51 @@ _CLI_TOOL_MAP = {
     "schema_diff": "schema-diff",
 }
 
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
 
 @dataclass
 class ArchiveBridge:
     config: EverMindConfig
 
-    @property
-    def executable(self) -> str | None:
-        return resolve_executable(self.config.basic_memory_path, "basic-memory")
+    def metadata(self) -> dict:
+        source = self.config.basic_memory_source_dir
+        source_integrated = (
+            (source / "LICENSE").is_file()
+            and (source / "pyproject.toml").is_file()
+            and (source / "src" / "basic_memory" / "mcp").is_dir()
+            and (source / "src" / "basic_memory" / "markdown").is_dir()
+        )
+        return {
+            "backend": ARCHIVE_BACKEND,
+            "source_integrated": source_integrated,
+            "source_path": str(source),
+            "license": ARCHIVE_LICENSE,
+            "mode": "local",
+            "cloud_enabled": False,
+            "bridge_runtime_allowed": False,
+        }
 
     def call(self, tool: str, arguments: dict | None = None) -> dict:
         args = arguments or {}
         if tool == "propose_basic_memory_update":
-            return self.propose_update(**args)
+            return self._with_metadata(self.propose_update(**args))
         if tool == "commit_basic_memory_update":
-            return self.commit_update(**args)
-        if tool not in _CLI_TOOL_MAP:
-            return bridge_error_response(
+            return self._with_metadata(self.commit_update(**args))
+        if tool not in _LOCAL_ARCHIVE_TOOLS:
+            return self._with_metadata(tool_error_response(
                 tool=tool,
-                engine="basic-memory",
+                engine="evermind-archive",
                 code="ARCHIVE_UNKNOWN_TOOL",
                 message=f"unknown archive tool: {tool}",
-            )
+            ))
 
-        if _should_use_fast_path(self.config, tool, args):
-            return _call_fast_path(self.config, tool, args)
+        return self._with_metadata(_call_local_archive(self.config, tool, args))
 
-        executable = self.executable
-        if executable is None:
-            return bridge_error_response(
-                tool=tool,
-                engine="basic-memory",
-                code="ARCHIVE_EXECUTABLE_NOT_FOUND",
-                message="basic-memory executable not found",
-                hint="Run scripts/windows/install-all.ps1 or install basic-memory==0.22.1.",
-            )
-
-        command = [executable, "tool", _CLI_TOOL_MAP[tool]]
-        command.extend(_archive_args(tool, args))
-        result = run_json_command(
-            command,
-            timeout_seconds=self.config.archive_timeout_seconds,
-            allow_text=True,
-        )
-        response = result.to_dict()
-        response["tool"] = tool
-        response["engine"] = "basic-memory"
-        if result.ok:
-            return _unwrap_archive_response(response)
-        return bridge_failure_response(
-            result,
-            tool=tool,
-            engine="basic-memory",
-            hint="Check Basic Memory installation, project name, and local/cloud routing flags.",
-        )
+    def _with_metadata(self, response: dict) -> dict:
+        response.update(self.metadata())
+        return response
 
     def propose_update(
         self,
@@ -120,13 +107,26 @@ class ArchiveBridge:
         evidence: str = "",
         reason: str = "",
     ) -> dict:
+        try:
+            project_slug = _safe_slug(project_slug)
+            target_path = _normalize_identifier(target_file)
+            _safe_child(self.config.archive_root / "projects" / project_slug, target_path)
+        except ValueError as exc:
+            return tool_error_response(
+                tool="propose_basic_memory_update",
+                engine="evermind-archive",
+                code="ARCHIVE_INVALID_ARGUMENT",
+                message=str(exc),
+                hint="Use a relative target path inside the archive project.",
+            )
+
         candidate_dir = self.config.archive_candidate_dir
         candidate_dir.mkdir(parents=True, exist_ok=True)
         candidate_id = f"bm_{uuid.uuid4().hex}"
         payload = {
             "candidate_id": candidate_id,
             "project_slug": project_slug,
-            "target_file": target_file,
+            "target_file": target_path.as_posix(),
             "content": content,
             "evidence": evidence,
             "reason": reason,
@@ -145,18 +145,43 @@ class ArchiveBridge:
         if not confirmed:
             return {
                 "ok": False,
-                "error": "confirmed=true is required before writing Basic Memory files",
+                "error": "confirmed=true is required before writing EverMind archive files",
                 "candidate_id": candidate_id,
             }
 
-        path = self.config.archive_candidate_dir / f"{candidate_id}.json"
+        if re.fullmatch(r"bm_[0-9a-f]{32}", candidate_id) is None:
+            return tool_error_response(
+                tool="commit_basic_memory_update",
+                engine="evermind-archive",
+                code="ARCHIVE_INVALID_ARGUMENT",
+                message="candidate_id must be a generated EverMind candidate ID",
+                hint="Use the candidate_id returned by propose_basic_memory_update.",
+            )
+
+        path = _safe_child(
+            self.config.archive_candidate_dir,
+            Path(f"{candidate_id}.json"),
+        )
         if not path.exists():
             return {"ok": False, "error": "candidate not found", "candidate_id": candidate_id}
 
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        project_slug = payload["project_slug"]
-        target_file = payload["target_file"]
-        note_file = self.config.archive_root / "projects" / project_slug / target_file
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            project_slug = _safe_slug(str(payload["project_slug"]))
+            target_file = _normalize_identifier(str(payload["target_file"]))
+            note_file = _safe_child(
+                self.config.archive_root / "projects" / project_slug,
+                target_file,
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            return tool_error_response(
+                tool="commit_basic_memory_update",
+                engine="evermind-archive",
+                code="ARCHIVE_INVALID_ARGUMENT",
+                message=f"invalid archive candidate: {exc}",
+                hint="Create a new candidate with propose_basic_memory_update.",
+            )
+
         note_file.parent.mkdir(parents=True, exist_ok=True)
         entry = _format_candidate_entry(payload)
         action = "append" if note_file.exists() else "create"
@@ -175,188 +200,55 @@ class ArchiveBridge:
         }
 
 
-def _archive_args(tool: str, args: dict) -> list[str]:
-    if tool == "write_note":
-        command = ["--title", args["title"], "--folder", args["folder"]]
-        _append_option(command, "--content", args.get("content"))
-        tags = args.get("tags")
-        if isinstance(tags, list):
-            tags = ",".join(str(tag) for tag in tags)
-        _append_option(command, "--tags", tags)
-        note_type = args.get("type")
-        if isinstance(note_type, list):
-            note_type = note_type[0] if note_type else None
-        _append_option(command, "--type", note_type)
-        _append_project_options(command, args)
-        if args.get("overwrite"):
-            command.append("--overwrite")
-        _append_route(command, args)
-        return command
-
-    if tool == "read_note":
-        command = [args["identifier"]]
-        if args.get("include_frontmatter"):
-            command.append("--include-frontmatter")
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool == "delete_note":
-        command = [args["identifier"]]
-        if args.get("is_directory"):
-            command.append("--is-directory")
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool == "edit_note":
-        command = [
-            args["identifier"],
-            "--operation",
-            args["operation"],
-            "--content",
-            args["content"],
-        ]
-        _append_option(command, "--find-text", args.get("find_text"))
-        _append_option(command, "--section", args.get("section"))
-        _append_option(command, "--expected-replacements", args.get("expected_replacements"))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool == "build_context":
-        command = [args["url"]]
-        for key in ("depth", "timeframe", "page", "page_size", "max_related"):
-            _append_option(command, "--" + key.replace("_", "-"), args.get(key))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool == "recent_activity":
-        command = []
-        _append_repeat(command, "--type", args.get("type"))
-        for key in ("depth", "timeframe", "page", "page_size"):
-            _append_option(command, "--" + key.replace("_", "-"), args.get(key))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool == "search_notes":
-        command = []
-        _append_positional(command, args.get("query"))
-        for flag in ("permalink", "title", "vector", "hybrid"):
-            if args.get(flag):
-                command.append("--" + flag.replace("_", "-"))
-        _append_option(command, "--after_date", args.get("after_date"))
-        _append_repeat(command, "--tag", args.get("tags"))
-        _append_option(command, "--status", args.get("status"))
-        _append_repeat(command, "--type", args.get("type"))
-        _append_repeat(command, "--entity-type", args.get("entity_type"))
-        _append_repeat(command, "--category", args.get("category"))
-        _append_repeat(command, "--meta", args.get("meta"))
-        _append_option(command, "--filter", args.get("filter"))
-        for key in ("page", "page_size"):
-            _append_option(command, "--" + key.replace("_", "-"), args.get(key))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool in {"list_memory_projects", "list_workspaces"}:
-        command = []
-        _append_route(command, args)
-        return command
-
-    if tool == "schema_validate":
-        command = []
-        _append_positional(command, args.get("target"))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    if tool in {"schema_infer", "schema_diff"}:
-        command = [args["note_type"]]
-        if tool == "schema_infer":
-            _append_option(command, "--threshold", args.get("threshold"))
-        _append_project_options(command, args)
-        _append_route(command, args)
-        return command
-
-    return []
-
-
-_FAST_PATH_TOOLS = {
-    "write_note",
-    "read_note",
-    "delete_note",
-    "edit_note",
-    "build_context",
-    "recent_activity",
-    "search_notes",
-    "list_memory_projects",
-    "list_workspaces",
-    "schema_validate",
-    "schema_infer",
-    "schema_diff",
-}
-
-
-def _should_use_fast_path(config: EverMindConfig, tool: str, args: dict) -> bool:
-    return (
-        config.archive_fast_path_enabled
-        and tool in _FAST_PATH_TOOLS
-        and not args.get("cloud")
-    )
-
-
-def _call_fast_path(config: EverMindConfig, tool: str, args: dict) -> dict:
+def _call_local_archive(config: EverMindConfig, tool: str, args: dict) -> dict:
     started = time.perf_counter()
     try:
         if tool == "write_note":
-            return _fast_write_note(config, tool, args, started)
+            return _local_route_response(_fast_write_note(config, tool, args, started), args)
         if tool == "read_note":
-            return _fast_read_note(config, tool, args, started)
+            return _local_route_response(_fast_read_note(config, tool, args, started), args)
         if tool == "delete_note":
-            return _fast_delete_note(config, tool, args, started)
+            return _local_route_response(_fast_delete_note(config, tool, args, started), args)
         if tool == "edit_note":
-            return _fast_edit_note(config, tool, args, started)
+            return _local_route_response(_fast_edit_note(config, tool, args, started), args)
         if tool == "build_context":
-            return _fast_build_context(config, tool, args, started)
+            return _local_route_response(_fast_build_context(config, tool, args, started), args)
         if tool == "recent_activity":
-            return _fast_recent_activity(config, tool, args, started)
+            return _local_route_response(_fast_recent_activity(config, tool, args, started), args)
         if tool == "search_notes":
-            return _fast_search_notes(config, tool, args, started)
+            return _local_route_response(_fast_search_notes(config, tool, args, started), args)
         if tool == "list_memory_projects":
-            return _fast_list_memory_projects(config, tool, started)
+            return _local_route_response(_fast_list_memory_projects(config, tool, started), args)
         if tool == "list_workspaces":
-            return _fast_list_workspaces(tool, started)
+            return _local_route_response(_fast_list_workspaces(tool, started), args)
         if tool == "schema_validate":
-            return _fast_schema_validate(config, tool, args, started)
+            return _local_route_response(_fast_schema_validate(config, tool, args, started), args)
         if tool == "schema_infer":
-            return _fast_schema_infer(config, tool, args, started)
+            return _local_route_response(_fast_schema_infer(config, tool, args, started), args)
         if tool == "schema_diff":
-            return _fast_schema_diff(config, tool, args, started)
+            return _local_route_response(_fast_schema_diff(config, tool, args, started), args)
     except KeyError as exc:
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_INVALID_ARGUMENT",
             message=f"missing required argument: {exc.args[0]}",
             hint="Check the tool schema and provide all required arguments.",
             latency_ms=_elapsed_ms(started),
         )
     except ValueError as exc:
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_INVALID_ARGUMENT",
             message=str(exc),
             hint="Check note identifiers, project names, and path-like arguments.",
             latency_ms=_elapsed_ms(started),
         )
     except OSError as exc:
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_IO_ERROR",
             message=str(exc),
             hint="Check archive root permissions and disk availability.",
@@ -364,13 +256,24 @@ def _call_fast_path(config: EverMindConfig, tool: str, args: dict) -> dict:
             latency_ms=_elapsed_ms(started),
         )
 
-    return bridge_error_response(
+    return tool_error_response(
         tool=tool,
-        engine="basic-memory",
-        code="ARCHIVE_FAST_PATH_UNSUPPORTED",
-        message=f"archive fast path does not support tool: {tool}",
+        engine="evermind-archive",
+        code="ARCHIVE_UNSUPPORTED_TOOL",
+        message=f"local archive does not support tool: {tool}",
         latency_ms=_elapsed_ms(started),
     )
+
+
+def _local_route_response(response: dict, args: dict) -> dict:
+    if response.get("ok"):
+        cloud_requested = bool(args.get("cloud"))
+        response.setdefault("route", "local")
+        response.setdefault("backend", ARCHIVE_BACKEND)
+        response.setdefault("license", ARCHIVE_LICENSE)
+        response.setdefault("cloud_requested", cloud_requested)
+        response.setdefault("cloud_disabled", cloud_requested)
+    return response
 
 
 def _fast_write_note(config: EverMindConfig, tool: str, args: dict, started: float) -> dict:
@@ -384,9 +287,9 @@ def _fast_write_note(config: EverMindConfig, tool: str, args: dict, started: flo
     path = _note_path_from_title(config, args, title, folder)
     existed = path.exists()
     if existed and not args.get("overwrite"):
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_NOTE_EXISTS",
             message=f"note already exists: {path}",
             hint="Set overwrite=true to replace the existing note.",
@@ -402,7 +305,7 @@ def _fast_write_note(config: EverMindConfig, tool: str, args: dict, started: flo
         started,
         action="updated" if existed else "created",
         path=str(path),
-        identifier=_identifier_for_path(config, args, path),
+        identifier=_identifier_for_any_project(config, path),
         content=text,
     )
 
@@ -410,9 +313,9 @@ def _fast_write_note(config: EverMindConfig, tool: str, args: dict, started: flo
 def _fast_read_note(config: EverMindConfig, tool: str, args: dict, started: float) -> dict:
     path = _note_path_from_identifier(config, args, str(args["identifier"]))
     if not path.exists():
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_NOTE_NOT_FOUND",
             message=f"note not found: {args['identifier']}",
             latency_ms=_elapsed_ms(started),
@@ -449,18 +352,18 @@ def _fast_delete_note(config: EverMindConfig, tool: str, args: dict, started: fl
 
 def _fast_edit_note(config: EverMindConfig, tool: str, args: dict, started: float) -> dict:
     path = _note_path_from_identifier(config, args, str(args["identifier"]))
-    if not path.exists():
-        return bridge_error_response(
-            tool=tool,
-            engine="basic-memory",
-            code="ARCHIVE_NOTE_NOT_FOUND",
-            message=f"note not found: {args['identifier']}",
-            latency_ms=_elapsed_ms(started),
-        )
 
     operation = str(args["operation"])
     content = str(args["content"])
     with _file_lock(path):
+        if not path.exists():
+            return tool_error_response(
+                tool=tool,
+                engine="evermind-archive",
+                code="ARCHIVE_NOTE_NOT_FOUND",
+                message=f"note not found: {args['identifier']}",
+                latency_ms=_elapsed_ms(started),
+            )
         old = path.read_text(encoding="utf-8")
         new, replacements = _edit_text(old, operation, content, args)
         _atomic_write_text(path, new)
@@ -478,20 +381,30 @@ def _fast_build_context(config: EverMindConfig, tool: str, args: dict, started: 
     identifier = str(args["url"]).removeprefix("memory://")
     path = _note_path_from_identifier(config, args, identifier)
     if not path.exists():
-        return bridge_error_response(
+        return tool_error_response(
             tool=tool,
-            engine="basic-memory",
+            engine="evermind-archive",
             code="ARCHIVE_NOTE_NOT_FOUND",
             message=f"context source not found: {args['url']}",
             latency_ms=_elapsed_ms(started),
         )
     text = _strip_frontmatter(path.read_text(encoding="utf-8"))
-    related = _search_note_files(config, args, _title_from_text(text, path), limit=int(args.get("max_related") or 5))
+    max_related = int(args.get("max_related") or 5)
+    primary_summary = _note_summary(config, args, path)
+    backlinks = _backlinks(config, args, path, primary_summary)
+    related = _search_note_files(
+        config,
+        args,
+        _title_from_text(text, path),
+        limit=max_related + len(backlinks),
+    )
+    related = _dedupe_context_items([*backlinks, *related], primary_summary["identifier"])[:max_related]
     return _archive_success(
         tool,
         started,
         url=args["url"],
-        primary={"path": str(path), "content": text},
+        primary={"path": str(path), "content": text, "summary": primary_summary},
+        backlinks=backlinks,
         related=related,
     )
 
@@ -590,8 +503,11 @@ def _archive_success(tool: str, started: float, **values: object) -> dict:
     return {
         "ok": True,
         "tool": tool,
-        "engine": "basic-memory",
+        "engine": "evermind-archive",
+        "backend": ARCHIVE_BACKEND,
+        "license": ARCHIVE_LICENSE,
         "latency_ms": _elapsed_ms(started),
+        "native": True,
         "fast_path": True,
         **values,
     }
@@ -603,7 +519,7 @@ def _elapsed_ms(started: float) -> float:
 
 def _project_root(config: EverMindConfig, args: dict) -> Path:
     project = str(args.get("project") or args.get("project_id") or "default")
-    root = config.archive_root / "projects" / _safe_slug(project)
+    root = archive_project_path(config, project)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -662,13 +578,17 @@ def _root_and_identifier_path(
 def _normalize_identifier(identifier: str) -> Path:
     if not identifier.strip():
         raise ValueError("identifier must not be empty")
-    normalized = identifier.strip().replace("\\", "/").strip("/")
+    normalized = identifier.strip().replace("\\", "/")
     if "://" in normalized:
         normalized = normalized.split("://", 1)[1]
     path = Path(normalized)
-    if path.is_absolute() or any(part == ".." for part in path.parts):
+    if (
+        path.is_absolute()
+        or re.match(r"^[A-Za-z]:/", normalized)
+        or any(part == ".." for part in path.parts)
+    ):
         raise ValueError("identifier must be a relative path inside the archive project")
-    return path
+    return Path(normalized.strip("/"))
 
 
 def _safe_child(root: Path, child: Path) -> Path:
@@ -726,34 +646,80 @@ def _safe_slug(value: str) -> str:
     return slug or "default"
 
 
+def archive_project_path(config: EverMindConfig, project: str) -> Path:
+    """Return the platform-safe archive directory for a catalog project."""
+    return config.archive_root / "projects" / _safe_slug(project)
+
+
 @contextmanager
 def _file_lock(path: Path, timeout_seconds: float = 10.0) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
     started = time.perf_counter()
     fd: int | None = None
-    while fd is None:
-        _remove_stale_lock(lock_path, older_than_seconds=30.0)
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-        except FileExistsError:
-            if time.perf_counter() - started > timeout_seconds:
-                raise TimeoutError(f"timed out waiting for archive lock: {lock_path}")
-            time.sleep(0.01)
+    in_process_lock = _path_lock(path)
+    acquired = in_process_lock.acquire(timeout=timeout_seconds)
+    if not acquired:
+        raise TimeoutError(f"timed out waiting for in-process archive lock: {path}")
     try:
-        yield
+        while fd is None:
+            _remove_stale_lock(lock_path, older_than_seconds=30.0)
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            except (FileExistsError, PermissionError):
+                if time.perf_counter() - started > timeout_seconds:
+                    raise TimeoutError(f"timed out waiting for archive lock: {lock_path}")
+                time.sleep(0.01)
+        try:
+            owner = json.dumps({"pid": os.getpid(), "created_at": time.time()}).encode("utf-8")
+            os.write(fd, owner)
+            os.fsync(fd)
+            yield
+        finally:
+            os.close(fd)
+            _unlink_with_retry(lock_path)
     finally:
-        os.close(fd)
-        _unlink_with_retry(lock_path)
+        in_process_lock.release()
+
+
+def _path_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve()).casefold() if os.name == "nt" else str(path.resolve())
+    with _PATH_LOCKS_GUARD:
+        lock = _PATH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PATH_LOCKS[key] = lock
+        return lock
 
 
 def _remove_stale_lock(lock_path: Path, older_than_seconds: float) -> None:
     try:
-        age = time.time() - lock_path.stat().st_mtime
+        stat = lock_path.stat()
     except FileNotFoundError:
         return
+    try:
+        owner = json.loads(lock_path.read_text(encoding="utf-8"))
+        pid = int(owner["pid"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        pid = 0
+    if pid > 0 and not _pid_is_running(pid):
+        _unlink_with_retry(lock_path)
+        return
+    age = time.time() - stat.st_mtime
     if age > older_than_seconds:
         _unlink_with_retry(lock_path)
+
+
+def _pid_is_running(pid: int) -> bool:
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _unlink_with_retry(path: Path, attempts: int = 5) -> None:
@@ -772,11 +738,26 @@ def _unlink_with_retry(path: Path, attempts: int = 5) -> None:
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_with_retry(tmp, path)
+    finally:
+        if tmp.exists():
+            _unlink_with_retry(tmp)
+
+
+def _replace_with_retry(source: Path, target: Path, attempts: int = 8) -> None:
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -800,6 +781,157 @@ def _frontmatter_keys(text: str) -> list[str]:
     return keys
 
 
+def _parse_frontmatter(text: str) -> dict:
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}
+    data: dict[str, object] = {}
+    current_list: str | None = None
+    for line in text[4:end].splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if line.startswith("  - ") and current_list:
+            value = line[4:].strip()
+            data.setdefault(current_list, [])
+            if isinstance(data[current_list], list):
+                data[current_list].append(value)
+            continue
+        if ":" not in line:
+            continue
+        key, raw = line.split(":", 1)
+        key = key.strip()
+        value = raw.strip()
+        if value:
+            data[key] = value.strip("'\"")
+            current_list = None
+        else:
+            data[key] = []
+            current_list = key
+    return data
+
+
+def _frontmatter_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    raw = str(value).strip()
+    if not raw:
+        return []
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    return [item.strip().strip("'\"") for item in raw.split(",") if item.strip()]
+
+
+def _extract_relations(text: str) -> list[dict]:
+    relations: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for match in re.finditer(r"\[\[([^\]]+)\]\]", text):
+        target = match.group(1).split("|", 1)[0].strip()
+        key = ("wikilink", target.casefold())
+        if target and key not in seen:
+            seen.add(key)
+            relations.append({"type": "wikilink", "target": target})
+    for match in re.finditer(r"\[([^\]]+)\]\((memory://[^)]+)\)", text):
+        label, target = match.groups()
+        target = target.removeprefix("memory://").strip()
+        key = ("memory_link", target.casefold())
+        if target and key not in seen:
+            seen.add(key)
+            relations.append({"type": "memory_link", "target": target, "label": label})
+    return relations
+
+
+def _extract_observations(text: str, limit: int = 20) -> list[str]:
+    observations: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        item = stripped[2:].strip()
+        if not item or item.startswith("["):
+            continue
+        observations.append(item)
+        if len(observations) >= limit:
+            break
+    return observations
+
+
+def _note_matches_filters(summary: dict, args: dict) -> bool:
+    requested_tags = set(_arg_values(args.get("tags")))
+    if requested_tags and not requested_tags <= set(summary.get("tags", [])):
+        return False
+
+    requested_type = set(_arg_values(args.get("type")))
+    if requested_type and str(summary.get("type", "")) not in requested_type:
+        return False
+
+    requested_status = set(_arg_values(args.get("status")))
+    if requested_status and str(summary.get("status", "")) not in requested_status:
+        return False
+
+    requested_category = set(_arg_values(args.get("category")))
+    if requested_category and not requested_category <= set(summary.get("category", [])):
+        return False
+
+    after_date = str(args.get("after_date") or "")
+    if after_date and len(after_date) >= 10:
+        try:
+            cutoff = time.mktime(time.strptime(after_date[:10], "%Y-%m-%d")) * 1000
+        except ValueError:
+            cutoff = 0
+        if cutoff and int(summary.get("modified_at") or 0) < cutoff:
+            return False
+    return True
+
+
+def _arg_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    raw = str(value).strip()
+    if not raw:
+        return []
+    return [raw]
+
+
+def _backlinks(config: EverMindConfig, args: dict, path: Path, primary: dict) -> list[dict]:
+    identifiers = {
+        str(primary.get("identifier", "")).casefold(),
+        str(primary.get("title", "")).casefold(),
+        path.stem.casefold(),
+    }
+    backlinks = []
+    for candidate in _note_files(config, args):
+        if candidate.resolve() == path.resolve():
+            continue
+        summary = _note_summary(config, args, candidate)
+        for relation in summary.get("relations", []):
+            target = str(relation.get("target") or "").removeprefix("memory://").casefold()
+            if target in identifiers:
+                item = dict(summary)
+                item["relation"] = "backlink"
+                backlinks.append(item)
+                break
+    return backlinks
+
+
+def _dedupe_context_items(items: list[dict], primary_identifier: str) -> list[dict]:
+    seen = {primary_identifier}
+    unique = []
+    for item in items:
+        identifier = str(item.get("identifier") or "")
+        if not identifier or identifier in seen:
+            continue
+        seen.add(identifier)
+        unique.append(item)
+    return unique
+
+
 def _title_from_text(text: str, path: Path) -> str:
     for line in text.splitlines():
         if line.startswith("# "):
@@ -815,15 +947,22 @@ def _note_files(config: EverMindConfig, args: dict) -> Iterator[Path]:
 
 def _note_summary(config: EverMindConfig, args: dict, path: Path, score: int = 0) -> dict:
     text = path.read_text(encoding="utf-8")
+    frontmatter = _parse_frontmatter(text)
     content = _strip_frontmatter(text)
     stat = path.stat()
     summary = {
         "title": _title_from_text(content, path),
+        "type": str(frontmatter.get("type") or "note"),
+        "tags": _frontmatter_list(frontmatter.get("tags")),
+        "status": str(frontmatter.get("status") or ""),
+        "category": _frontmatter_list(frontmatter.get("category")),
         "path": str(path),
-        "identifier": _identifier_for_any_project(config, path),
+        "identifier": _response_identifier_for_path(config, args, path),
         "modified_at": int(stat.st_mtime * 1000),
         "score": score,
         "excerpt": _excerpt(content),
+        "relations": _extract_relations(content),
+        "observations": _extract_observations(content),
     }
     if args.get("include_content"):
         summary["content"] = content
@@ -856,11 +995,27 @@ def _search_note_files(config: EverMindConfig, args: dict, query: str, limit: in
     matches = []
     for path in _note_files(config, args):
         text = path.read_text(encoding="utf-8", errors="ignore")
+        summary = _note_summary(config, args, path)
+        if not _note_matches_filters(summary, args):
+            continue
         haystack = text.casefold()
-        score = sum(haystack.count(term) for term in terms) if terms else 1
+        relation_haystack = " ".join(
+            str(relation.get("target", "")) for relation in summary["relations"]
+        ).casefold()
+        tag_haystack = " ".join(summary["tags"]).casefold()
+        title_haystack = summary["title"].casefold()
+        score = (
+            sum(haystack.count(term) for term in terms)
+            + sum(3 * title_haystack.count(term) for term in terms)
+            + sum(2 * tag_haystack.count(term) for term in terms)
+            + sum(2 * relation_haystack.count(term) for term in terms)
+            if terms
+            else 1
+        )
         if terms and score == 0:
             continue
-        matches.append(_note_summary(config, args, path, score=score))
+        summary["score"] = score
+        matches.append(summary)
     matches.sort(key=lambda item: (item["score"], item["modified_at"]), reverse=True)
     return matches[:limit]
 
@@ -912,55 +1067,6 @@ def _replace_markdown_section(old: str, section: str, content: str) -> tuple[str
                 break
     new_lines = lines[: heading_index + 1] + content.splitlines() + lines[end:]
     return "\n".join(new_lines).rstrip() + "\n", 1
-
-
-def _append_project_options(command: list[str], args: dict) -> None:
-    _append_option(command, "--project", args.get("project"))
-    _append_option(command, "--project-id", args.get("project_id"))
-
-
-def _append_route(command: list[str], args: dict) -> None:
-    if args.get("local"):
-        command.append("--local")
-    if args.get("cloud"):
-        command.append("--cloud")
-
-
-def _append_option(command: list[str], flag: str, value: object | None) -> None:
-    if value is None:
-        return
-    command.extend([flag, str(value)])
-
-
-def _append_repeat(command: list[str], flag: str, values: object | None) -> None:
-    if values is None:
-        return
-    if isinstance(values, str):
-        values = [values]
-    for value in values:
-        command.extend([flag, str(value)])
-
-
-def _append_positional(command: list[str], value: object | None) -> None:
-    if value is not None:
-        command.append(str(value))
-
-
-def _unwrap_archive_response(response: dict) -> dict:
-    data = response.get("data")
-    if isinstance(data, dict):
-        merged = dict(data)
-        merged.setdefault("ok", True)
-        merged.setdefault("engine", response["engine"])
-        merged.setdefault("tool", response["tool"])
-        merged.setdefault("latency_ms", response["latency_ms"])
-        return merged
-    if data is not None:
-        response["ok"] = True
-        return response
-    response["data"] = response["stdout"]
-    response["ok"] = True
-    return response
 
 
 def _format_candidate_entry(payload: dict) -> str:

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import queue
-import time
 import threading
 from typing import Optional, Callable
 
@@ -43,6 +42,7 @@ class EmbeddingManager:
         self._model = None
         self._model_lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue(maxsize=500)
+        self._stop_event = threading.Event()
         self._on_embed: Optional[Callable[[str, list[float]], None]] = None
         self._processed_count = 0
         self._failed_count = 0
@@ -131,6 +131,17 @@ class EmbeddingManager:
         """Load the model or verify the API path with a tiny request."""
         return self.encode("warmup") is not None
 
+    def close(self) -> None:
+        """Stop the background embedding worker."""
+        if not self._stop_event.is_set():
+            self._stop_event.set()
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
+        self._worker.join(timeout=self._timeout_seconds + 1.0)
+        self._on_embed = None
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -207,9 +218,13 @@ class EmbeddingManager:
 
     def _process_queue(self) -> None:
         """Background worker: encode queued memories and fire callback."""
-        while True:
+        while not self._stop_event.is_set():
             try:
-                memory_id, text, attempt = self._queue.get(timeout=1.0)
+                item = self._queue.get(timeout=1.0)
+                if item is None:
+                    self._queue.task_done()
+                    break
+                memory_id, text, attempt = item
                 vec = self.encode(text)
                 if vec is not None and self._on_embed:
                     try:
@@ -219,7 +234,9 @@ class EmbeddingManager:
                         logger.debug("Embed callback error: %s", exc)
                 elif vec is None:
                     if attempt < self._queue_max_retries and self._enabled:
-                        time.sleep(min(2 ** attempt, 5))
+                        if self._stop_event.wait(min(2 ** attempt, 5)):
+                            self._queue.task_done()
+                            break
                         try:
                             self._queue.put_nowait((memory_id, text, attempt + 1))
                         except queue.Full:
