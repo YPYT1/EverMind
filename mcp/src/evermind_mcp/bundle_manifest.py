@@ -80,6 +80,7 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
 
     components: set[str] = set()
     verified_paths: set[Path] = set()
+    verified_relative_paths: set[str] = set()
     for entry in files:
         path, component, expected_size, expected_hash = _validate_entry(entry)
         resolved = (bundle_root / path).resolve()
@@ -92,6 +93,7 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
         if resolved in verified_paths:
             raise BundleIntegrityError(f"duplicate manifest path: {path}")
         verified_paths.add(resolved)
+        verified_relative_paths.add(Path(path).as_posix())
         components.add(component)
         if not resolved.is_file():
             raise BundleIntegrityError(f"bundle file is missing: {path}")
@@ -104,6 +106,22 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
     if missing:
         raise BundleIntegrityError(
             f"missing required components: {', '.join(missing)}"
+        )
+    allowed_metadata = {
+        manifest_path.relative_to(bundle_root).as_posix(),
+        marker_path.resolve().relative_to(bundle_root).as_posix(),
+    }
+    actual_files = {
+        path.relative_to(bundle_root).as_posix()
+        for path in bundle_root.rglob("*")
+        if path.is_file()
+    }
+    unexpected = sorted(
+        actual_files - verified_relative_paths - allowed_metadata
+    )
+    if unexpected:
+        raise BundleIntegrityError(
+            f"unmanifested bundle files: {', '.join(unexpected)}"
         )
     return {
         "manifest_path": str(manifest_path),

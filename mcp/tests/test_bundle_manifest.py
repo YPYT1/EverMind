@@ -119,6 +119,16 @@ def test_official_bundle_marker_requires_manifest_hash(tmp_path: Path) -> None:
         module.verify_official_bundle(package_dir)
 
 
+def test_official_bundle_rejects_unmanifested_file(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, _, _ = _write_bundle(tmp_path)
+    injected = package_dir / "injected.py"
+    injected.write_text("raise RuntimeError('injected')\n", encoding="utf-8")
+
+    with pytest.raises(module.BundleIntegrityError, match="unmanifested bundle files"):
+        module.verify_official_bundle(package_dir)
+
+
 def test_official_bundle_rejects_manifest_path_escape(tmp_path: Path) -> None:
     module = _bundle_module()
     package_dir, manifest_path, manifest = _write_bundle(tmp_path)
