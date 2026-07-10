@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import re
 
@@ -8,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 INIT_PATH = REPO_ROOT / "src" / "evermind_mcp" / "__init__.py"
 SERVER_PATH = REPO_ROOT / "src" / "evermind_mcp" / "server_v2.py"
-EXPECTED_TOOL_COUNT = 42
+EXPECTED_TOOL_COUNT = 50
 
 
 def read_project_version(pyproject_path: Path = PYPROJECT_PATH) -> str:
@@ -43,7 +44,7 @@ def read_tool_count(server_path: Path = SERVER_PATH) -> int:
         module = importlib.util.module_from_spec(spec)
         sys.modules["evermind_mcp.server_v2"] = module
         spec.loader.exec_module(module)
-        return len(module.TOOLS)
+        return len(asyncio.run(module.mcp.list_tools()))
     finally:
         try:
             sys.path.remove(str(src_root))
@@ -63,11 +64,11 @@ def run_checks() -> list[str]:
     tool_count = read_tool_count()
     if tool_count != EXPECTED_TOOL_COUNT:
         errors.append(
-            f"Tool count mismatch: server_v2.py defines {tool_count}, expected {EXPECTED_TOOL_COUNT}"
+            f"Tool count mismatch: FastMCP exposes {tool_count}, expected {EXPECTED_TOOL_COUNT}"
         )
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for required in ["EverMind MCP", "evermind-mcp", "42 tools"]:
+    for required in ["EverMind MCP", "evermind-mcp", "50 tools"]:
         if required not in readme:
             errors.append(f"Missing '{required}' in README.md")
     for forbidden in ["tt-a1i", "uvx evermind-mcp@latest"]:

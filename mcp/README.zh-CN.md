@@ -12,11 +12,13 @@ uv run --directory <EVERMIND_ROOT>/mcp evermind-mcp
 
 ## 工具
 
-EverMind MCP 暴露 42 个工具：
+EverMind MCP 暴露 50 个工具：
 
 - 14 个 memory 工具：`remember`, `update_memory`, `recall`, `forget`, `briefing`, `list`, `graph_explore`, `status`, `export`, `compact`, `tags`, `reindex`, `health`, `list_spaces`
-- 14 个 codebase graph 工具：`index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`
-- 14 个 archive 工具：`write_note`, `read_note`, `delete_note`, `edit_note`, `build_context`, `recent_activity`, `search_notes`, `list_memory_projects`, `list_workspaces`, `schema_validate`, `schema_infer`, `schema_diff`, `propose_basic_memory_update`, `commit_basic_memory_update`
+- 13 个 codebase graph 工具：`index_repository`, `list_projects`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`
+- 20 个本地 Basic Memory 工具：`build_context`, `canvas`, `create_memory_project`, `delete_note`, `edit_note`, `fetch`, `list_directory`, `list_memory_projects`, `move_note`, `read_content`, `read_note`, `recent_activity`, `release_notes`, `schema_diff`, `schema_infer`, `schema_validate`, `search`, `search_notes`, `view_note`, `write_note`
+- 2 个审核后归档更新工具：`propose_basic_memory_update`, `commit_basic_memory_update`
+- 1 个统一项目生命周期工具：`delete_project`
 
 ## 配置
 

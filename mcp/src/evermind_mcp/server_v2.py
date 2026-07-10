@@ -64,58 +64,6 @@ _last_roots_space: str | None = None
 # ---------------------------------------------------------------------------
 
 
-def _props(*names: str) -> dict:
-    schema = {
-        "query": {"type": "string"},
-        "identifier": {"type": "string"},
-        "title": {"type": "string"},
-        "folder": {"type": "string"},
-        "content": {"type": "string"},
-        "project": {"type": "string"},
-        "project_id": {"type": "string"},
-        "tags": {"type": "array", "items": {"type": "string"}},
-        "type": {
-            "oneOf": [
-                {"type": "string"},
-                {"type": "array", "items": {"type": "string"}},
-            ]
-        },
-        "overwrite": {"type": "boolean", "default": False},
-        "local": {"type": "boolean", "default": False},
-        "include_frontmatter": {"type": "boolean", "default": False},
-        "is_directory": {"type": "boolean", "default": False},
-        "operation": {"type": "string"},
-        "find_text": {"type": "string"},
-        "section": {"type": "string"},
-        "expected_replacements": {"type": "integer"},
-        "url": {"type": "string"},
-        "depth": {"type": "integer"},
-        "timeframe": {"type": "string"},
-        "page": {"type": "integer"},
-        "page_size": {"type": "integer"},
-        "max_related": {"type": "integer"},
-        "permalink": {"type": "boolean", "default": False},
-        "vector": {"type": "boolean", "default": False},
-        "hybrid": {"type": "boolean", "default": False},
-        "after_date": {"type": "string"},
-        "status": {"type": "string"},
-        "entity_type": {"type": "array", "items": {"type": "string"}},
-        "category": {"type": "array", "items": {"type": "string"}},
-        "meta": {"type": "array", "items": {"type": "string"}},
-        "filter": {"type": "string"},
-        "target": {"type": "string"},
-        "note_type": {"type": "string"},
-        "threshold": {"type": "number"},
-        "project_slug": {"type": "string"},
-        "target_file": {"type": "string"},
-        "evidence": {"type": "string"},
-        "reason": {"type": "string"},
-        "candidate_id": {"type": "string"},
-        "confirmed": {"type": "boolean", "default": False},
-    }
-    return {name: schema[name] for name in names}
-
-
 def _tool(name: str, schema: dict) -> types.Tool:
     input_schema = {
         "type": "object",
@@ -591,141 +539,24 @@ CODEBASE_TOOL_SCHEMAS: dict[str, dict] = {
     },
 }
 
-ARCHIVE_TOOL_SCHEMAS: dict[str, dict] = {
-    "write_note": {
-        "description": "Create or overwrite an EverMind archive Markdown note.",
-        "properties": _props(
-            "title",
-            "folder",
-            "content",
-            "project",
-            "project_id",
-            "tags",
-            "type",
-            "overwrite",
-            "local",
-        ),
-        "required": ["title", "folder"],
-    },
-    "read_note": {
-        "description": "Read an EverMind archive note by identifier or memory:// URL.",
-        "properties": _props(
-            "identifier", "project", "project_id", "include_frontmatter", "local"
-        ),
-        "required": ["identifier"],
-    },
-    "delete_note": {
-        "description": "Delete an EverMind archive note or directory.",
-        "properties": _props(
-            "identifier", "project", "project_id", "is_directory", "local"
-        ),
-        "required": ["identifier"],
-    },
-    "edit_note": {
-        "description": "Edit an EverMind archive note via append/prepend/find_replace/replace_section.",
-        "properties": _props(
-            "identifier",
-            "operation",
-            "content",
-            "find_text",
-            "section",
-            "expected_replacements",
-            "project",
-            "project_id",
-            "local",
-        ),
-        "required": ["identifier", "operation", "content"],
-    },
-    "build_context": {
-        "description": "Build related EverMind archive context from a note URL.",
-        "properties": _props(
-            "url",
-            "depth",
-            "timeframe",
-            "page",
-            "page_size",
-            "max_related",
-            "project",
-            "project_id",
-            "local",
-        ),
-        "required": ["url"],
-    },
-    "recent_activity": {
-        "description": "Return recent EverMind archive activity.",
-        "properties": _props(
-            "type",
-            "depth",
-            "timeframe",
-            "page",
-            "page_size",
-            "project",
-            "project_id",
-            "local",
-        ),
-        "required": [],
-    },
-    "search_notes": {
-        "description": "Search EverMind archive notes.",
-        "properties": _props(
-            "query",
-            "permalink",
-            "title",
-            "vector",
-            "hybrid",
-            "after_date",
-            "tags",
-            "status",
-            "type",
-            "entity_type",
-            "category",
-            "meta",
-            "filter",
-            "page",
-            "page_size",
-            "project",
-            "project_id",
-            "local",
-        ),
-        "required": [],
-    },
-    "list_memory_projects": {
-        "description": "List EverMind archive projects.",
-        "properties": _props("local"),
-        "required": [],
-    },
-    "list_workspaces": {
-        "description": "List local archive workspaces.",
-        "properties": _props("local"),
-        "required": [],
-    },
-    "schema_validate": {
-        "description": "Validate EverMind archive notes against schemas.",
-        "properties": _props("target", "project", "project_id", "local"),
-        "required": [],
-    },
-    "schema_infer": {
-        "description": "Infer an EverMind archive schema from notes of a type.",
-        "properties": _props(
-            "note_type", "threshold", "project", "project_id", "local"
-        ),
-        "required": ["note_type"],
-    },
-    "schema_diff": {
-        "description": "Show EverMind archive schema drift for a note type.",
-        "properties": _props("note_type", "project", "project_id", "local"),
-        "required": ["note_type"],
-    },
+CANDIDATE_TOOL_SCHEMAS: dict[str, dict] = {
     "propose_basic_memory_update": {
         "description": "Write a reviewed EverMind archive candidate; does not modify formal notes.",
-        "properties": _props(
-            "project_slug", "target_file", "content", "evidence", "reason"
-        ),
+        "properties": {
+            "project_slug": {"type": "string"},
+            "target_file": {"type": "string"},
+            "content": {"type": "string"},
+            "evidence": {"type": "string"},
+            "reason": {"type": "string"},
+        },
         "required": ["project_slug", "target_file", "content"],
     },
     "commit_basic_memory_update": {
         "description": "Commit an EverMind archive candidate only when confirmed=true.",
-        "properties": _props("candidate_id", "confirmed"),
+        "properties": {
+            "candidate_id": {"type": "string"},
+            "confirmed": {"type": "boolean", "default": False},
+        },
         "required": ["candidate_id", "confirmed"],
     },
 }
@@ -733,7 +564,7 @@ ARCHIVE_TOOL_SCHEMAS: dict[str, dict] = {
 TOOLS: list[types.Tool] = [
     *MEMORY_TOOLS,
     *[_tool(name, CODEBASE_TOOL_SCHEMAS[name]) for name in sorted(CODEBASE_TOOL_NAMES)],
-    *[_tool(name, ARCHIVE_TOOL_SCHEMAS[name]) for name in sorted(ARCHIVE_TOOL_NAMES)],
+    *[_tool(name, CANDIDATE_TOOL_SCHEMAS[name]) for name in sorted(ARCHIVE_TOOL_NAMES)],
 ]
 
 BASIC_TOOL_FUNCTIONS = (
@@ -758,14 +589,10 @@ BASIC_TOOL_FUNCTIONS = (
     view_note,
     write_note,
 )
-CANDIDATE_TOOL_NAMES = {
-    "propose_basic_memory_update",
-    "commit_basic_memory_update",
-}
 FAST_CORE_TOOLS = [
     *MEMORY_TOOLS,
     *[_tool(name, CODEBASE_TOOL_SCHEMAS[name]) for name in sorted(CODEBASE_TOOL_NAMES)],
-    *[_tool(name, ARCHIVE_TOOL_SCHEMAS[name]) for name in sorted(CANDIDATE_TOOL_NAMES)],
+    *[_tool(name, CANDIDATE_TOOL_SCHEMAS[name]) for name in sorted(ARCHIVE_TOOL_NAMES)],
 ]
 
 # ---------------------------------------------------------------------------

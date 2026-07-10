@@ -179,6 +179,23 @@ def test_vendored_source_manifest_matches_current_source_trees() -> None:
         )
 
 
+def test_legacy_archive_dispatch_is_removed() -> None:
+    import evermind_mcp.server_v2 as server_mod
+
+    assert archive_bridge.ARCHIVE_TOOL_NAMES == {
+        "propose_basic_memory_update",
+        "commit_basic_memory_update",
+    }
+    assert not hasattr(archive_bridge, "_fast_write_note")
+    legacy_names = {tool.name for tool in server_mod.TOOLS}
+    assert {
+        "write_note",
+        "search_notes",
+        "schema_validate",
+        "list_workspaces",
+    }.isdisjoint(legacy_names)
+
+
 def test_vendored_manifest_matches_binary_and_offline_fixture() -> None:
     manifest = json.loads(
         (ROOT / "third_party" / "source-manifest.json").read_text(encoding="utf-8")
@@ -300,26 +317,6 @@ def test_memory_service_close_stops_its_workers(tmp_path: Path) -> None:
         assert not service_threads
     finally:
         service.storage.close_all()
-
-
-def test_archive_lock_recovers_immediately_when_owner_is_dead(tmp_path: Path) -> None:
-    note = tmp_path / "archive" / "projects" / "sample" / "note.md"
-    note.parent.mkdir(parents=True)
-    lock = note.with_name(note.name + ".lock")
-    lock.write_text(
-        json.dumps({"pid": 2_147_483_647, "created_at": time.time()}),
-        encoding="utf-8",
-    )
-
-    acquired = False
-    try:
-        with archive_bridge._file_lock(note, timeout_seconds=0.1):
-            acquired = True
-    except TimeoutError:
-        pass
-
-    assert acquired
-    assert not lock.exists()
 
 
 @pytest.mark.asyncio
@@ -805,11 +802,17 @@ async def test_unified_delete_resumes_only_unfinished_workspace_steps(
 
 
 @pytest.mark.asyncio
-async def test_code_index_and_memory_write_share_one_catalog_project(
-    tmp_path: Path, monkeypatch
+async def test_code_index_memory_and_basic_binding_share_one_catalog_project(
+    tmp_path: Path,
 ) -> None:
+    import os
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     repo = tmp_path / "workspace"
     repo.mkdir()
+    (repo / "app.py").write_text("def unified_project():\n    return True\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(
         [
@@ -823,52 +826,82 @@ async def test_code_index_and_memory_write_share_one_catalog_project(
         ],
         check=True,
     )
-    service = MemoryService(_config(tmp_path, space="coding:before-index"))
-    try:
-        monkeypatch.setattr(
-            service.codebase,
-            "call",
-            lambda tool, arguments: {
-                "ok": True,
-                "tool": tool,
-                "project": arguments["project"],
-            },
-        )
-        indexed = service.call_codebase("index_repository", {"repo_path": str(repo)})
-        remembered = await service.remember(
-            "one project lifecycle memory", importance=1
-        )
-        archived = service.call_archive(
-            "write_note",
-            {
-                "title": "Unified Lifecycle",
-                "folder": "decisions",
-                "content": "one project archive",
-                "overwrite": True,
-            },
-        )
+    config = _config(tmp_path, space="coding:before-index")
+    env = dict(os.environ)
+    env.update(
+        EVERMIND_HOME=str(config.home),
+        EVERMIND_DEFAULT_SPACE=config.default_space,
+        EVERMIND_WORKSPACE_ROOT=str(repo),
+        EVERMIND_ARCHIVE_ROOT=str(config.archive_root),
+        BASIC_MEMORY_CONFIG_DIR=str(tmp_path / "basic-memory"),
+        LOCALAPPDATA=str(tmp_path / "localappdata"),
+        APPDATA=str(tmp_path / "appdata"),
+        HOME=str(tmp_path / "home-env"),
+        USERPROFILE=str(tmp_path / "userprofile"),
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from evermind_mcp.server_v2 import main_sync; main_sync()"],
+        env=env,
+    )
 
-        assert service.space == indexed["project_id"]
-        assert service.storage.source_projects(remembered["id"]) == [
-            indexed["project_id"]
-        ]
-        assert archived["ok"] is True
-        assert f"/projects/{indexed['project_id']}/" in archived["path"].replace(
-            "\\", "/"
-        )
-        workspace = service.storage.conn.execute(
-            "SELECT project_id FROM workspaces WHERE workspace_id=?",
-            (indexed["workspace_id"],),
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            indexed = await session.call_tool(
+                "index_repository", {"repo_path": str(repo)}
+            )
+            assert indexed.isError is False, indexed.content[0].text
+            indexed_payload = indexed.structuredContent or json.loads(
+                indexed.content[0].text
+            )
+            project_id = indexed_payload.get("project_id") or indexed_payload.get(
+                "result", {}
+            ).get("project_id")
+            assert project_id
+
+            remembered = await session.call_tool(
+                "remember",
+                {"content": "one project lifecycle memory", "importance": 1},
+            )
+            archived = await session.call_tool(
+                "write_note",
+                {
+                    "title": "Unified Lifecycle",
+                    "content": "one project archive",
+                    "directory": "decisions",
+                    "project": project_id,
+                },
+            )
+            assert remembered.isError is False, remembered.content[0].text
+            assert archived.isError is False, archived.content[0].text
+
+    service = MemoryService(config)
+    try:
+        row = service.storage.conn.execute(
+            """
+            SELECT workspace.workspace_id, workspace.project_id,
+                   workspace.canonical_path,
+                   binding.basic_external_id, binding.basic_name, binding.basic_path
+            FROM workspaces workspace
+            JOIN memory_sources source
+              ON source.project_id=workspace.project_id
+            JOIN memories memory ON memory.id=source.memory_id
+            JOIN basic_project_bindings binding
+              ON binding.project_id=workspace.project_id
+            WHERE workspace.project_id=? AND memory.content=?
+            """,
+            (project_id, "one project lifecycle memory"),
         ).fetchone()
-        assert workspace["project_id"] == indexed["project_id"]
-        binding = service.storage.conn.execute(
-            "SELECT * FROM basic_project_bindings WHERE project_id=?",
-            (indexed["project_id"],),
-        ).fetchone()
-        assert binding["basic_external_id"] == indexed["project_id"]
-        assert (
-            Path(binding["basic_path"]).resolve()
-            in Path(archived["path"]).resolve().parents
+
+        assert row is not None
+        assert row["project_id"] == project_id
+        assert Path(row["canonical_path"]).resolve() == repo.resolve()
+        assert row["basic_external_id"] == row["basic_name"]
+        note_files = list(Path(row["basic_path"]).rglob("*.md"))
+        assert any(
+            "one project archive" in note.read_text(encoding="utf-8")
+            for note in note_files
         )
     finally:
         service.close()

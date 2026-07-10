@@ -12,11 +12,13 @@ The parent EverMind setup renders ready-to-copy client snippets into `generated/
 
 ## Tools
 
-EverMind MCP exposes 42 tools:
+EverMind MCP exposes 50 tools:
 
 - 14 memory tools: `remember`, `update_memory`, `recall`, `forget`, `briefing`, `list`, `graph_explore`, `status`, `export`, `compact`, `tags`, `reindex`, `health`, `list_spaces`
-- 14 codebase graph tools: `index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`
-- 14 archive tools: `write_note`, `read_note`, `delete_note`, `edit_note`, `build_context`, `recent_activity`, `search_notes`, `list_memory_projects`, `list_workspaces`, `schema_validate`, `schema_infer`, `schema_diff`, `propose_basic_memory_update`, `commit_basic_memory_update`
+- 13 codebase graph tools: `index_repository`, `list_projects`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`
+- 20 local Basic Memory tools: `build_context`, `canvas`, `create_memory_project`, `delete_note`, `edit_note`, `fetch`, `list_directory`, `list_memory_projects`, `move_note`, `read_content`, `read_note`, `recent_activity`, `release_notes`, `schema_diff`, `schema_infer`, `schema_validate`, `search`, `search_notes`, `view_note`, `write_note`
+- 2 reviewed archive update tools: `propose_basic_memory_update`, `commit_basic_memory_update`
+- 1 unified project lifecycle tool: `delete_project`
 
 ## Configuration
 
