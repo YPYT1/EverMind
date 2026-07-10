@@ -10,6 +10,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .bundle_manifest import (
+    find_official_bundle_root,
+    is_official_bundle_verified,
+)
 from .config_v2 import EverMindConfig
 from .tool_bridge import bridge_error_response
 
@@ -36,19 +40,31 @@ class VendoredCodebase:
         source = self.config.codebase_source_dir
         binary = self._binary_path()
         integrity = self._source_integrity()
+        bundle_verified = self._bundle_verified(binary)
         return {
             "backend": "vendored-codebase-memory-mcp",
-            "source_integrated": integrity["ok"],
+            "source_integrated": integrity["ok"] or bundle_verified,
             "source_path": str(source),
             "binary_available": binary.is_file(),
             "binary_path": str(binary),
+            "bundle_verified": bundle_verified,
             "build_target": "make -f Makefile.cbm cbm",
             "license": "MIT",
-            "tree_sitter_grammar_count": integrity["tree_sitter_grammar_count"],
+            "tree_sitter_grammar_count": (
+                EXPECTED_TREE_SITTER_GRAMMAR_COUNT
+                if bundle_verified
+                else integrity["tree_sitter_grammar_count"]
+            ),
             "expected_tree_sitter_grammar_count": EXPECTED_TREE_SITTER_GRAMMAR_COUNT,
-            "hybrid_lsp_files_present": integrity["hybrid_lsp_files_present"],
+            "hybrid_lsp_files_present": (
+                list(REQUIRED_HYBRID_LSP_FILES)
+                if bundle_verified
+                else integrity["hybrid_lsp_files_present"]
+            ),
             "hybrid_lsp_required_files": list(REQUIRED_HYBRID_LSP_FILES),
-            "missing_source_files": integrity["missing_source_files"],
+            "missing_source_files": (
+                [] if bundle_verified else integrity["missing_source_files"]
+            ),
         }
 
     @property
@@ -57,7 +73,10 @@ class VendoredCodebase:
 
     @property
     def available(self) -> bool:
-        return self.source_available and self._binary_path().is_file()
+        binary = self._binary_path()
+        return binary.is_file() and (
+            self.source_available or self._bundle_verified(binary)
+        )
 
     def call(self, tool: str, arguments: dict | None = None) -> dict:
         args = dict(arguments or {})
@@ -89,11 +108,14 @@ class VendoredCodebase:
             )
 
         command = [str(binary), "cli", "--json", tool]
+        working_directory = self.config.codebase_source_dir
+        if not working_directory.is_dir():
+            working_directory = binary.parent
         try:
             proc = subprocess.run(
                 command,
                 input=json.dumps(args, ensure_ascii=False),
-                cwd=str(self.config.codebase_source_dir),
+                cwd=str(working_directory),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -188,6 +210,17 @@ class VendoredCodebase:
                 return bare
         return path
 
+    def _bundle_verified(self, binary: Path | None = None) -> bool:
+        bundle_root = find_official_bundle_root()
+        if bundle_root is None:
+            return False
+        binary = binary or self._binary_path()
+        try:
+            binary.resolve().relative_to(bundle_root)
+        except ValueError:
+            return False
+        return is_official_bundle_verified(bundle_root=bundle_root)
+
     def _source_integrity(self) -> dict:
         source = self.config.codebase_source_dir
         cbm = source / "internal" / "cbm"
@@ -243,6 +276,7 @@ def _normalize_success(
     result["native"] = True
     result["fallback"] = "vendored"
     result["source_integrated"] = metadata["source_integrated"]
+    result["bundle_verified"] = metadata["bundle_verified"]
     result["binary_path"] = metadata["binary_path"]
     result["tree_sitter_grammar_count"] = metadata["tree_sitter_grammar_count"]
     result["expected_tree_sitter_grammar_count"] = metadata[

@@ -21,6 +21,7 @@ REQUIRED_COMPONENTS = frozenset(
     }
 )
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_VERIFIED_BUNDLE_ROOTS: set[Path] = set()
 
 
 class BundleIntegrityError(RuntimeError):
@@ -31,6 +32,22 @@ def find_official_bundle_root(package_dir: str | Path | None = None) -> Path | N
     """Return the marked official bundle root without hashing its contents."""
     location = _load_bundle_location(package_dir)
     return location[3] if location is not None else None
+
+
+def is_official_bundle_verified(
+    bundle_root: str | Path | None = None,
+    *,
+    package_dir: str | Path | None = None,
+) -> bool:
+    """Return whether this process completed verification for the bundle root."""
+    if bundle_root is None:
+        try:
+            bundle_root = find_official_bundle_root(package_dir)
+        except BundleIntegrityError:
+            return False
+    if bundle_root is None:
+        return False
+    return Path(bundle_root).resolve() in _VERIFIED_BUNDLE_ROOTS
 
 
 def _load_bundle_location(
@@ -71,6 +88,7 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
     if location is None:
         return None
     marker_path, marker, manifest_path, bundle_root = location
+    _VERIFIED_BUNDLE_ROOTS.discard(bundle_root)
 
     expected_manifest_hash = marker.get("manifest_sha256")
     if (
@@ -139,6 +157,7 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
         raise BundleIntegrityError(
             f"unmanifested bundle files: {', '.join(unexpected)}"
         )
+    _VERIFIED_BUNDLE_ROOTS.add(bundle_root)
     return {
         "manifest_path": str(manifest_path),
         "files_verified": len(verified_paths),

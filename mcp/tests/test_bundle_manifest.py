@@ -96,6 +96,21 @@ def test_official_bundle_root_is_discovered_from_marker(tmp_path: Path) -> None:
     ).resolve()
 
 
+def test_official_bundle_verification_state_tracks_latest_result(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, _, _ = _write_bundle(tmp_path)
+
+    assert module.is_official_bundle_verified(package_dir=package_dir) is False
+    module.verify_official_bundle(package_dir)
+    assert module.is_official_bundle_verified(package_dir=package_dir) is True
+
+    model = tmp_path / "EverMind" / REQUIRED_COMPONENT_FILES["embedding-model"]
+    model.write_bytes(b"X" + model.read_bytes()[1:])
+    with pytest.raises(module.BundleIntegrityError):
+        module.verify_official_bundle(package_dir)
+    assert module.is_official_bundle_verified(package_dir=package_dir) is False
+
+
 def test_official_bundle_rejects_tampered_file(tmp_path: Path) -> None:
     module = _bundle_module()
     package_dir, _, _ = _write_bundle(tmp_path)
