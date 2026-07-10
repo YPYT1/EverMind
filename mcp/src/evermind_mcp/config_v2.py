@@ -96,6 +96,9 @@ class EverMindConfig:
     embed_model: str = "Qwen/Qwen3-Embedding-8B"
     embed_enabled: bool = True
     embed_dim: int = 512
+    local_embed_model_path: Path = field(
+        default_factory=lambda: _default_local_embed_model_path()
+    )
     embed_warmup_on_start: bool = True
     embed_queue_max_retries: int = 5
 
@@ -201,8 +204,9 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
     embed_provider = _env("EVERMIND_EMBED_PROVIDER", "auto")
     embed_model = _env("EVERMIND_EMBED_MODEL", "Qwen/Qwen3-Embedding-8B")
     embed_enabled = _env_bool("EVERMIND_EMBED_ENABLED", True)
-    if embed_provider == "auto" and not api_key and embed_model.startswith("Qwen/"):
-        embed_enabled = False
+    local_embed_model_path = Path(
+        _env("EVERMIND_LOCAL_EMBED_MODEL_PATH") or _default_local_embed_model_path()
+    )
     llm_enabled_default = bool(api_key) and _env_bool("EVERMIND_LLM_ENABLED", True)
 
     return EverMindConfig(
@@ -216,6 +220,7 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         embed_model=embed_model,
         embed_enabled=embed_enabled,
         embed_dim=_env_int("EVERMIND_EMBED_DIM", 512),
+        local_embed_model_path=local_embed_model_path,
         embed_warmup_on_start=_env_bool("EVERMIND_EMBED_WARMUP_ON_START", True),
         embed_queue_max_retries=_env_int("EVERMIND_EMBED_QUEUE_MAX_RETRIES", 5),
         rerank_enabled=_env_bool("EVERMIND_RERANK_ENABLED", True),
@@ -253,3 +258,7 @@ def _repo_root() -> Path:
 def _default_codebase_binary_path() -> Path:
     name = "codebase-memory-mcp.exe" if os.name == "nt" else "codebase-memory-mcp"
     return _repo_root() / "third_party" / "codebase-memory-mcp" / "build" / "c" / name
+
+
+def _default_local_embed_model_path() -> Path:
+    return _repo_root() / "third_party" / "models" / "multilingual-e5-small"

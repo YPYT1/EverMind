@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+from evermind_mcp.config_v2 import EverMindConfig
+from evermind_mcp.memory_service_v2 import MemoryService
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +109,76 @@ def test_pinned_local_model_meets_retrieval_quality_gate() -> None:
         query_prefix=manifest.get("query_prefix", ""),
         document_prefix=manifest.get("document_prefix", ""),
     )
+
+    for suite, result in metrics.items():
+        assert result["hit_at_3"] >= 0.95, (suite, result)
+        assert result["mrr"] >= 0.90, (suite, result)
+
+
+@pytest.mark.skipif(
+    os.environ.get("EVERMIND_RUN_MODEL_QUALITY") != "1",
+    reason="set EVERMIND_RUN_MODEL_QUALITY=1 for the product retrieval gate",
+)
+@pytest.mark.asyncio
+async def test_memory_service_meets_retrieval_quality_gate(tmp_path: Path) -> None:
+    manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
+    dataset = json.loads(DATASET.read_text(encoding="utf-8"))
+    model_path = Path(
+        os.environ.get("EVERMIND_LOCAL_MODEL_PATH")
+        or ROOT / manifest["artifact"]["path"]
+    )
+    documents = dataset["documents"]
+    metrics = {}
+
+    for suite, cases in dataset["suites"].items():
+        prefix = dataset["suite_corpora"][suite]
+        corpus = [item for item in documents if item["id"].startswith(prefix)]
+        service = MemoryService(
+            EverMindConfig(
+                home=tmp_path / suite,
+                default_space=f"quality:{suite}",
+                embed_enabled=True,
+                embed_provider="local",
+                local_embed_model_path=model_path,
+                embed_warmup_on_start=False,
+                rerank_enabled=False,
+                graph_enabled=False,
+                cosine_dedup_threshold=0,
+            )
+        )
+        try:
+            memory_ids = {}
+            for item in corpus:
+                remembered = await service.remember(item["text"], importance=1)
+                memory_ids[item["id"]] = remembered["id"]
+
+            deadline = time.monotonic() + 60
+            profile_id = service.embedder.local_profile.profile_id
+            while (
+                service.storage.count_profile_embeddings(profile_id) < len(corpus)
+                and time.monotonic() < deadline
+            ):
+                await asyncio.sleep(0.05)
+            assert service.storage.count_profile_embeddings(profile_id) == len(corpus)
+
+            ranks = []
+            for case in cases:
+                result = await service.recall(
+                    case["query"], mode="semantic", limit=3, min_score=0
+                )
+                ranked_ids = [item["id"] for item in result["results"]]
+                target_id = memory_ids[case["target"]]
+                ranks.append(
+                    ranked_ids.index(target_id) + 1
+                    if target_id in ranked_ids
+                    else len(corpus) + 1
+                )
+            metrics[suite] = {
+                "hit_at_3": sum(rank <= 3 for rank in ranks) / len(ranks),
+                "mrr": sum(1.0 / rank for rank in ranks) / len(ranks),
+            }
+        finally:
+            service.close()
 
     for suite, result in metrics.items():
         assert result["hit_at_3"] >= 0.95, (suite, result)

@@ -935,7 +935,6 @@ async def test_code_index_memory_and_basic_binding_share_one_catalog_project(
         service.close()
 
 
-@pytest.mark.xfail(strict=True, reason="no-key startup disables semantic retrieval")
 def test_local_embedding_is_enabled_without_external_api(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -956,6 +955,10 @@ def test_local_embedding_is_enabled_without_external_api(
 
     assert config.embed_enabled is True
     assert config.embed_provider == "auto"
+    assert config.local_embed_model_path == (
+        ROOT / "third_party" / "models" / "multilingual-e5-small"
+    )
+    assert config.local_embed_model_path.is_dir()
 
 
 @pytest.mark.asyncio
@@ -1030,6 +1033,89 @@ async def test_real_stdio_exposes_the_unified_local_surface(tmp_path: Path) -> N
             assert len((await session.list_prompts()).prompts) == 3
             assert len((await session.list_resources()).resources) == 1
             assert len((await session.list_resource_templates()).resourceTemplates) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_stdio_uses_local_semantic_recall_without_api_key(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    env = dict(os.environ)
+    for key in (
+        "EVERMIND_SILICONFLOW_API_KEY",
+        "SILICONFLOW_API_KEY",
+        "EVERMIND_EMBED_API_KEY",
+        "EVERMIND_LLM_API_KEY",
+        "EVERMIND_EMBED_ENABLED",
+        "EVERMIND_EMBED_PROVIDER",
+        "EVERMIND_EMBED_MODEL",
+    ):
+        env.pop(key, None)
+    env.update(
+        EVERMIND_HOME=str(tmp_path / "home"),
+        EVERMIND_DEFAULT_SPACE="stdio:semantic",
+        BASIC_MEMORY_CONFIG_DIR=str(tmp_path / "basic-memory"),
+        EVERMIND_RERANK_ENABLED="0",
+        EVERMIND_GRAPH_ENABLED="0",
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from evermind_mcp.server_v2 import main_sync; main_sync()"],
+        env=env,
+    )
+
+    def payload(result) -> dict:
+        value = result.structuredContent or json.loads(result.content[0].text)
+        return value.get("result", value)
+
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            assert len((await session.list_tools()).tools) == 50
+            target = payload(
+                await session.call_tool(
+                    "remember",
+                    {
+                        "content": "Invoice exports are written as Parquet files.",
+                        "importance": 1,
+                    },
+                )
+            )
+            await session.call_tool(
+                "remember",
+                {
+                    "content": "Authentication tokens rotate every seven days.",
+                    "importance": 1,
+                },
+            )
+
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                status = payload(await session.call_tool("status", {}))
+                if status["embedding_coverage_percent"] == 100.0:
+                    break
+                await asyncio.sleep(0.1)
+            assert status["embedding_coverage_percent"] == 100.0
+
+            recalled = payload(
+                await session.call_tool(
+                    "recall",
+                    {
+                        "query": "Which file format stores billing exports?",
+                        "mode": "semantic",
+                        "limit": 1,
+                        "min_score": 0,
+                    },
+                )
+            )
+
+    assert recalled["results"][0]["id"] == target["id"]
+    assert recalled["embedding_profile"].startswith("local-")
+    assert recalled["embedding_fallback_reason"] is None
 
 
 @pytest.mark.asyncio

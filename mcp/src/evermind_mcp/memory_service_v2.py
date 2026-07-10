@@ -16,7 +16,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 
 from .storage import EmbeddedStorage
-from .embedding import EmbeddingManager
+from .embedding import EmbeddingManager, EmbeddingProfile
 from .reranker import RerankerManager
 from .llm import LLMManager
 from .legacy_migration import LegacyCatalogMigrator
@@ -194,6 +194,7 @@ class MemoryService:
 
     def __init__(self, config: EverMindConfig) -> None:
         self.config = config
+        self._closing = threading.Event()
         config.home.mkdir(parents=True, exist_ok=True)
         self.storage = EmbeddedStorage(config.db_path(config.default_space))
         LegacyCatalogMigrator(config.home, self.storage).migrate()
@@ -216,8 +217,25 @@ class MemoryService:
             dimensions=config.embed_dim,
             timeout_seconds=config.api_timeout_seconds,
             queue_max_retries=config.embed_queue_max_retries,
+            local_model_path=config.local_embed_model_path,
         )
         self.embedder.set_callback(self._on_embedding_ready)
+        pending_embeddings = []
+        for profile in self.embedder.profiles:
+            self.storage.register_embedding_profile(
+                profile.profile_id,
+                profile.provider,
+                profile.model,
+                profile.version,
+                profile.dimensions,
+            )
+            self.storage.ensure_profile_pending(profile.profile_id)
+            for memory_id, content in self.storage.pending_embedding_inputs(
+                profile.profile_id
+            ):
+                pending_embeddings.append(
+                    (memory_id, content, profile.profile_id)
+                )
         self.reranker = RerankerManager(
             model_name=config.rerank_model,
             enabled=config.rerank_enabled,
@@ -249,15 +267,6 @@ class MemoryService:
         self._recall_latencies: deque[float] = deque(maxlen=200)
         self._last_recall_trace: dict = {}
 
-        # CHANGE 6: Check embedding dimension matches storage expectation
-        if self.embedder.available:
-            actual_dim = self.embedder.dim
-            if not self.storage.check_embed_dim(actual_dim):
-                logger.warning(
-                    "Vector search disabled due to embedding dimension mismatch."
-                )
-                self.embedder._enabled = False
-
         if config.auto_reindex_on_start:
             try:
                 self.storage.reindex_fts(self.space)
@@ -270,7 +279,6 @@ class MemoryService:
             self.reranker.warmup()
 
         # Single persistent briefing worker (replaces per-call thread spawning)
-        self._closing = threading.Event()
         self._briefing_event = threading.Event()
         self._briefing_worker = threading.Thread(
             target=self._briefing_worker_loop,
@@ -278,6 +286,8 @@ class MemoryService:
             name="evermind-briefing",
         )
         self._briefing_worker.start()
+        for memory_id, content, profile_id in pending_embeddings:
+            self.embedder.enqueue(memory_id, content, profile_id=profile_id)
 
     def set_space(self, space: str) -> None:
         """Switch the active project while retaining the shared catalog."""
@@ -726,7 +736,7 @@ class MemoryService:
             }
 
         # Enqueue background embedding
-        self.embedder.enqueue(memory.id, content)
+        self._queue_embeddings(memory.id, content)
 
         # Log the event
         self.storage.log_event(space, "remember", memory.id, {"importance": importance})
@@ -801,6 +811,9 @@ class MemoryService:
 
         fts_results: list = []
         vec_results: list = []
+        embedding_profile = None
+        embedding_fallback_reason = None
+        embedding_coverage = None
 
         # Full-text search
         if mode in ("hybrid", "fts"):
@@ -824,10 +837,31 @@ class MemoryService:
 
         # Semantic / vector search
         if mode in ("hybrid", "semantic"):
-            vec = self.embedder.encode(query)
-            if vec is not None:
-                vec_results = self.storage.search_vec_global(
-                    vec,
+            encoded = self.embedder.encode_query(query)
+            if encoded is not None:
+                embedding_coverage = self.storage.profile_embedding_coverage(
+                    encoded.profile.profile_id
+                )
+                if (
+                    encoded.profile.provider != "local"
+                    and embedding_coverage < 1.0
+                ):
+                    local_encoded = self.embedder.encode_local_query(query)
+                    if local_encoded is not None:
+                        encoded = local_encoded
+                        embedding_coverage = (
+                            self.storage.profile_embedding_coverage(
+                                encoded.profile.profile_id
+                            )
+                        )
+                        embedding_fallback_reason = "external_coverage_incomplete"
+                embedding_profile = encoded.profile.profile_id
+                embedding_fallback_reason = (
+                    embedding_fallback_reason or encoded.fallback_reason
+                )
+                vec_results = self.storage.search_profile_embeddings(
+                    encoded.vector,
+                    encoded.profile.profile_id,
                     space,
                     limit=candidate_limit,
                     include_expired=include_expired,
@@ -889,6 +923,13 @@ class MemoryService:
                 all_spaces=all_spaces,
                 min_score=effective_min_score if min_score is not None else None,
             )
+            self._last_recall_trace.update(
+                {
+                    "embedding_profile": embedding_profile,
+                    "embedding_coverage": embedding_coverage,
+                    "embedding_fallback_reason": embedding_fallback_reason,
+                }
+            )
             return {
                 "results": [],
                 "mode": mode,
@@ -896,6 +937,9 @@ class MemoryService:
                 "query": query,
                 "all_spaces": all_spaces,
                 "include_expired": include_expired,
+                "embedding_profile": embedding_profile,
+                "embedding_coverage": embedding_coverage,
+                "embedding_fallback_reason": embedding_fallback_reason,
                 "latency_ms": latency_ms,
                 "rerank_applied": False,
                 "rerank_fallback_reason": "no_candidates",
@@ -936,6 +980,13 @@ class MemoryService:
             min_score=threshold_min_score,
             threshold_reason=threshold_reason,
         )
+        self._last_recall_trace.update(
+            {
+                "embedding_profile": embedding_profile,
+                "embedding_coverage": embedding_coverage,
+                "embedding_fallback_reason": embedding_fallback_reason,
+            }
+        )
         results, conflicts = self._prepare_results(final_list, query=query)
         return {
             "results": results,
@@ -944,6 +995,9 @@ class MemoryService:
             "query": query,
             "all_spaces": all_spaces,
             "include_expired": include_expired,
+            "embedding_profile": embedding_profile,
+            "embedding_coverage": embedding_coverage,
+            "embedding_fallback_reason": embedding_fallback_reason,
             "latency_ms": latency_ms,
             "rerank_applied": rerank_applied,
             "rerank_fallback_reason": rerank_fallback,
@@ -1070,7 +1124,7 @@ class MemoryService:
             return {"updated": False, "id": memory_id, "error": "not found"}
 
         if content_changed:
-            self.embedder.enqueue(updated.id, updated.content)
+            self._queue_embeddings(updated.id, updated.content)
             if self.config.graph_enabled:
                 entities = self.storage.extract_entities_from_content(updated.content)
                 if entities:
@@ -1183,9 +1237,8 @@ class MemoryService:
         stats = self.storage.get_stats(self.space)
         graph_stats = self.storage.get_graph_stats(self.space)
         total = stats.get("total_count", 0) or 0
-        embeddings = self.storage.count_embeddings(self.space)
+        embeddings, embedding_coverage = self._local_embedding_status()
         fts_entries = self.storage.count_fts_entries(self.space)
-        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
         fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
         try:
             import jieba  # noqa: F401
@@ -1221,6 +1274,9 @@ class MemoryService:
             "briefing_important": self.config.briefing_important,
             "api_timeout_seconds": self.config.api_timeout_seconds,
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "embedding_profiles": self._embedding_profiles_status(),
+            "embedding_selected_profile": self.embedder.last_selected_profile,
+            "embedding_fallback_reason": self.embedder.last_fallback_reason,
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
             "codebase_engine_available": True,
@@ -1343,11 +1399,10 @@ class MemoryService:
         stats = self.storage.get_stats(self.space)
         graph_stats = self.storage.get_graph_stats(self.space)
         total = stats.get("total_count", 0) or 0
-        embeddings = self.storage.count_embeddings(self.space)
         fts_entries = self.storage.count_fts_entries(self.space)
         duplicates = self.storage.count_exact_duplicates(self.space)
         expired = self.storage.count_expired_working(self.space)
-        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
+        _, embedding_coverage = self._local_embedding_status()
         fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
         duplicate_rate = round((duplicates / total) * 100, 2) if total else 0.0
         codebase_meta = self.codebase.metadata()
@@ -1368,6 +1423,9 @@ class MemoryService:
             "duplicate_rate_percent": duplicate_rate,
             "api_timeout_seconds": self.config.api_timeout_seconds,
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "embedding_profiles": self._embedding_profiles_status(),
+            "embedding_selected_profile": self.embedder.last_selected_profile,
+            "embedding_fallback_reason": self.embedder.last_fallback_reason,
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
             "codebase_engine_available": True,
@@ -1399,6 +1457,31 @@ class MemoryService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _local_embedding_status(self) -> tuple[int, float]:
+        profile_id = self.embedder.local_profile.profile_id
+        ready = self.storage.count_profile_embeddings(profile_id)
+        coverage = round(
+            self.storage.profile_embedding_coverage(profile_id) * 100,
+            2,
+        )
+        return ready, coverage
+
+    def _embedding_profiles_status(self) -> list[dict]:
+        return [
+            {
+                "profile_id": profile.profile_id,
+                "provider": profile.provider,
+                "model": profile.model,
+                "version": profile.version,
+                "dimensions": profile.dimensions,
+                "coverage": round(
+                    self.storage.profile_embedding_coverage(profile.profile_id), 4
+                ),
+                "ready": self.storage.count_profile_embeddings(profile.profile_id),
+            }
+            for profile in self.embedder.profiles
+        ]
+
     def _briefing_worker_loop(self) -> None:
         """Single background thread that refreshes briefing cache on demand."""
         while not self._closing.is_set():
@@ -1412,17 +1495,32 @@ class MemoryService:
         if not self._closing.is_set():
             self._briefing_event.set()
 
-    def _on_embedding_ready(self, memory_id: str, vec: list[float]) -> None:
+    def _queue_embeddings(self, memory_id: str, content: str) -> None:
+        for profile in self.embedder.profiles:
+            self.storage.mark_embedding_pending(memory_id, profile.profile_id)
+        self.embedder.enqueue(memory_id, content)
+
+    def _on_embedding_ready(
+        self,
+        memory_id: str,
+        profile: EmbeddingProfile,
+        vec: list[float],
+    ) -> None:
         """
         Callback invoked by EmbeddingManager when a background embedding
         finishes. Writes the vector to storage and refreshes the briefing cache.
         """
         if self._closing.is_set():
             return
-        rowid = self.storage.get_memory_rowid(memory_id)
-        if rowid:
-            self.storage.update_embedding(rowid, vec)
-            logger.debug("Embedding stored for memory_id=%s rowid=%s", memory_id, rowid)
+        if self.storage.get_memory(memory_id) is not None:
+            self.storage.store_profile_embedding(
+                memory_id, profile.profile_id, vec
+            )
+            logger.debug(
+                "Embedding stored for memory_id=%s profile=%s",
+                memory_id,
+                profile.profile_id,
+            )
         else:
             logger.debug(
                 "Memory %s deleted before embedding callback finished", memory_id

@@ -571,18 +571,15 @@ dependencies = [
     { name = "fastmcp" },
     { name = "mcp" },
     { name = "python-dotenv" },
+    { name = "sentence-transformers" },
 ]
 
 [package.optional-dependencies]
 chinese = [
     { name = "jieba" },
 ]
-embedding = [
-    { name = "sentence-transformers" },
-]
 full = [
     { name = "jieba" },
-    { name = "sentence-transformers" },
     { name = "sqlite-vec" },
 ]
 vector = [
@@ -604,8 +601,7 @@ requires-dist = [
     { name = "jieba", marker = "extra == 'full'", specifier = ">=0.42" },
     { name = "mcp", specifier = "==1.26.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "sentence-transformers", marker = "extra == 'embedding'", specifier = ">=3.0" },
-    { name = "sentence-transformers", marker = "extra == 'full'", specifier = ">=3.0" },
+    { name = "sentence-transformers", specifier = "==5.6.0" },
     { name = "sqlite-vec", marker = "extra == 'full'", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'vector'", specifier = ">=0.1.6" },
 ]

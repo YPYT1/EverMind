@@ -435,13 +435,13 @@ class TestEmbeddingDimProtection:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_dim_mismatch_disables_vec(self, tmp_path):
-        """After dim mismatch, embedder should be disabled.
-
-        This test simulates the dimension mismatch scenario.
-        """
+    async def test_profile_dimensions_do_not_conflict_with_legacy_vec(self, tmp_path):
+        """Versioned profiles coexist with the legacy fixed-width vec table."""
         cfg = EverMindConfig(
-            home=tmp_path, default_space="coding:test", embed_enabled=True
+            home=tmp_path,
+            default_space="coding:test",
+            embed_enabled=True,
+            embed_warmup_on_start=False,
         )
 
         # Pre-set dimension in storage
@@ -449,20 +449,13 @@ class TestEmbeddingDimProtection:
         storage.set_meta("embed_dim", "512")
         storage.close_all()
 
-        # Create service (will detect mismatch if model has different dim)
         svc = MemoryService(cfg)
-
-        if svc.embedder.available:
-            # If embedder loaded successfully, verify dim check happened
-            actual_dim = svc.embedder.dim
-            stored_dim = int(svc.storage.get_meta("embed_dim"))
-
-            if actual_dim != stored_dim:
-                # Mismatch detected, embedder should be disabled
-                assert svc.embedder._enabled is False
-            else:
-                # Dimensions match, embedder should still be enabled
-                assert svc.embedder._enabled is True
+        try:
+            assert svc.embedder.local_profile.dimensions == 384
+            assert int(svc.storage.get_meta("embed_dim")) == 512
+            assert svc.embedder._enabled is True
+        finally:
+            svc.close()
 
 
 # ============================================================================

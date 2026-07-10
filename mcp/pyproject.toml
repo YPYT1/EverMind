@@ -20,6 +20,7 @@ dependencies = [
     "mcp==1.26.0",
     "fastmcp==3.3.1",
     "python-dotenv>=1.0.0",
+    "sentence-transformers==5.6.0",
 ]
 
 [tool.uv.sources]
@@ -27,9 +28,9 @@ basic-memory = { path = "../third_party/basic-memory", editable = true }
 
 [project.optional-dependencies]
 vector = ["sqlite-vec>=0.1.6"]
-embedding = ["sentence-transformers>=3.0"]
+embedding = []
 chinese = ["jieba>=0.42"]
-full = ["sqlite-vec>=0.1.6", "sentence-transformers>=3.0", "jieba>=0.42"]
+full = ["sqlite-vec>=0.1.6", "jieba>=0.42"]
 
 [project.urls]
 Homepage = "https://github.com/YPYT1/EverMind"

@@ -1137,6 +1137,219 @@ class EmbeddedStorage:
             logger.warning("Global vector search failed: %s", exc)
             return []
 
+    def register_embedding_profile(
+        self,
+        profile_id: str,
+        provider: str,
+        model: str,
+        version: str,
+        dimensions: int,
+    ) -> None:
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO embedding_profiles
+                    (profile_id, provider, model, version, dimensions, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    provider=excluded.provider,
+                    model=excluded.model,
+                    version=excluded.version,
+                    dimensions=excluded.dimensions
+                """,
+                (profile_id, provider, model, version, dimensions, self._now_ms()),
+            )
+            self.conn.commit()
+
+    def mark_embedding_pending(self, memory_id: str, profile_id: str) -> None:
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                VALUES (?, ?, NULL, 'pending', 0, ?)
+                ON CONFLICT(memory_id, profile_id) DO UPDATE SET
+                    status=CASE
+                        WHEN memory_embeddings.status='ready' THEN 'ready'
+                        ELSE 'pending'
+                    END,
+                    updated_at=excluded.updated_at
+                """,
+                (memory_id, profile_id, self._now_ms()),
+            )
+            self.conn.commit()
+
+    def ensure_profile_pending(self, profile_id: str) -> None:
+        now = self._now_ms()
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                SELECT memory.id, ?, NULL, 'pending', 0, ?
+                FROM memories memory
+                WHERE memory.state='active'
+                  AND NOT EXISTS(
+                      SELECT 1 FROM memory_embeddings embedding
+                      WHERE embedding.memory_id=memory.id
+                        AND embedding.profile_id=?
+                  )
+                """,
+                (profile_id, now, profile_id),
+            )
+            self.conn.commit()
+
+    def pending_embedding_inputs(
+        self, profile_id: str, limit: int = 500
+    ) -> list[tuple[str, str]]:
+        rows = self.conn.execute(
+            """
+            SELECT memory.id, memory.content
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=?
+              AND embedding.status='pending'
+              AND memory.state='active'
+            ORDER BY embedding.updated_at, memory.created_at
+            LIMIT ?
+            """,
+            (profile_id, limit),
+        ).fetchall()
+        return [(row["id"], row["content"]) for row in rows]
+
+    def store_profile_embedding(
+        self, memory_id: str, profile_id: str, embedding: list[float]
+    ) -> None:
+        import struct
+
+        profile = self.conn.execute(
+            "SELECT dimensions FROM embedding_profiles WHERE profile_id=?",
+            (profile_id,),
+        ).fetchone()
+        if profile is None:
+            raise ValueError(f"unknown embedding profile: {profile_id}")
+        dimensions = int(profile["dimensions"])
+        if len(embedding) != dimensions:
+            raise ValueError(
+                f"embedding dimension mismatch: expected {dimensions}, got {len(embedding)}"
+            )
+        vector = struct.pack(f"<{dimensions}f", *embedding)
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                VALUES (?, ?, ?, 'ready', 0, ?)
+                ON CONFLICT(memory_id, profile_id) DO UPDATE SET
+                    vector=excluded.vector,
+                    status='ready',
+                    attempts=0,
+                    updated_at=excluded.updated_at
+                """,
+                (memory_id, profile_id, vector, self._now_ms()),
+            )
+            self.conn.execute(
+                "UPDATE memories SET embedding_ready=1 WHERE id=?", (memory_id,)
+            )
+            self.conn.commit()
+
+    def search_profile_embeddings(
+        self,
+        embedding: list[float],
+        profile_id: str,
+        current_project: str,
+        limit: int = 10,
+        include_expired: bool = False,
+    ) -> list[MemoryRow]:
+        import struct
+
+        profile = self.conn.execute(
+            "SELECT dimensions FROM embedding_profiles WHERE profile_id=?",
+            (profile_id,),
+        ).fetchone()
+        if profile is None or len(embedding) != int(profile["dimensions"]):
+            return []
+        validity = ""
+        params: list = [current_project, profile_id]
+        if not include_expired:
+            validity = (
+                "AND memory.state='active' "
+                "AND (memory.expires_at IS NULL OR memory.expires_at > ?)"
+            )
+            params.append(self._now_ms())
+        rows = self.conn.execute(
+            f"""
+            SELECT memory.*, embedding.vector,
+                   EXISTS(
+                       SELECT 1 FROM memory_sources source
+                       WHERE source.memory_id=memory.id
+                         AND source.project_id=? AND source.active=1
+                   ) AS current_project_source,
+                   COALESCE((
+                       SELECT MAX(source.importance) FROM memory_sources source
+                       WHERE source.memory_id=memory.id AND source.active=1
+                   ), memory.importance) AS source_importance
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=? AND embedding.status='ready'
+              {validity}
+            """,
+            params,
+        ).fetchall()
+        query_norm = sum(value * value for value in embedding) ** 0.5
+        if query_norm == 0:
+            return []
+        memories = []
+        dimensions = len(embedding)
+        for row in rows:
+            if row["vector"] is None:
+                continue
+            vector = struct.unpack(f"<{dimensions}f", row["vector"])
+            vector_norm = sum(value * value for value in vector) ** 0.5
+            if vector_norm == 0:
+                continue
+            score = sum(a * b for a, b in zip(embedding, vector)) / (
+                query_norm * vector_norm
+            )
+            if row["current_project_source"]:
+                score += 0.01
+            memory = self._row_to_memory(row, score=score)
+            memory.importance = row["source_importance"]
+            memories.append(memory)
+        memories.sort(key=lambda memory: memory.score, reverse=True)
+        return memories[:limit]
+
+    def count_profile_embeddings(self, profile_id: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=? AND embedding.status='ready'
+              AND memory.state='active'
+              AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+            """,
+            (profile_id, self._now_ms()),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def profile_embedding_coverage(self, profile_id: str) -> float:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN embedding.status='ready' THEN 1 ELSE 0 END) AS ready
+            FROM memories memory
+            LEFT JOIN memory_embeddings embedding
+              ON embedding.memory_id=memory.id AND embedding.profile_id=?
+            WHERE memory.state='active'
+              AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+            """,
+            (profile_id, self._now_ms()),
+        ).fetchone()
+        total = int(row["total"] or 0) if row else 0
+        ready = int(row["ready"] or 0) if row else 0
+        return 1.0 if total == 0 else ready / total
+
     def update_embedding(self, memory_rowid: int, embedding: list[float]) -> None:
         if not self._vec_available:
             return

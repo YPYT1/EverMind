@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from urllib import error
 
 import pytest
 
 from evermind_mcp.api_client import ApiResult, post_json
 from evermind_mcp.config_v2 import EverMindConfig, load_config
-from evermind_mcp.embedding import EmbeddingManager
+from evermind_mcp.embedding import EncodedEmbedding, EmbeddingManager, EmbeddingProfile
 from evermind_mcp.memory_service_v2 import MemoryService, _detect_memory_type
 from evermind_mcp.reranker import RerankerManager
 from evermind_mcp.storage import EmbeddedStorage
@@ -79,14 +80,280 @@ def test_load_config_reads_repo_root_env(tmp_path, monkeypatch):
     assert cfg.llm_model == "deepseek-ai/DeepSeek-V4-Flash"
 
 
-def test_qwen_default_without_key_does_not_load_local_model():
+def test_qwen_default_without_key_uses_bundled_local_profile():
+    local_model = (
+        Path(__file__).resolve().parents[2]
+        / "third_party"
+        / "models"
+        / "multilingual-e5-small"
+    )
     manager = EmbeddingManager(
         model_name="Qwen/Qwen3-Embedding-8B",
         provider="auto",
         api_key="",
         enabled=True,
+        local_model_path=local_model,
     )
-    assert manager.available is False
+    try:
+        assert manager.available is True
+        assert manager.local_profile.provider == "local"
+        assert manager.local_profile.dimensions == 384
+    finally:
+        manager.close()
+
+
+def test_external_embedding_failure_falls_back_to_local(tmp_path, monkeypatch):
+    manager = EmbeddingManager(
+        model_name="external-model",
+        provider="auto",
+        api_key="sk-test",
+        enabled=True,
+        local_model_path=tmp_path,
+    )
+    monkeypatch.setattr(manager, "_encode_api", lambda _text: None)
+    monkeypatch.setattr(
+        manager,
+        "_encode_local",
+        lambda _text, *, query: [1.0] + [0.0] * 383,
+    )
+    try:
+        encoded = manager.encode_query("semantic query")
+        assert encoded is not None
+        assert encoded.profile.provider == "local"
+        assert encoded.fallback_reason == "external_unavailable"
+    finally:
+        manager.close()
+
+
+def test_external_embedding_is_preferred_when_healthy(tmp_path, monkeypatch):
+    manager = EmbeddingManager(
+        model_name="external-model",
+        provider="auto",
+        api_key="sk-test",
+        enabled=True,
+        local_model_path=tmp_path,
+        dimensions=3,
+    )
+    monkeypatch.setattr(manager, "_encode_api", lambda _text: [0.0, 1.0, 0.0])
+    monkeypatch.setattr(
+        manager,
+        "_encode_local",
+        lambda _text, *, query: pytest.fail("local fallback should not run"),
+    )
+    try:
+        encoded = manager.encode_query("semantic query")
+        assert encoded is not None
+        assert encoded.profile.provider == "siliconflow"
+        assert encoded.fallback_reason is None
+    finally:
+        manager.close()
+
+
+def test_embedding_profiles_are_stored_and_searched_without_mixing(tmp_path):
+    storage = EmbeddedStorage(tmp_path / "catalog.db")
+    try:
+        local = storage.insert_memory("project-a", "local profile target", importance=1)
+        external = storage.insert_memory(
+            "project-a", "external profile target", importance=1
+        )
+        storage.register_embedding_profile("local-v1", "local", "e5", "rev", 3)
+        storage.register_embedding_profile(
+            "external-v1", "siliconflow", "qwen", "v1", 3
+        )
+        storage.store_profile_embedding(local.id, "local-v1", [1.0, 0.0, 0.0])
+        storage.store_profile_embedding(
+            external.id, "external-v1", [1.0, 0.0, 0.0]
+        )
+
+        results = storage.search_profile_embeddings(
+            [1.0, 0.0, 0.0], "local-v1", "project-a", limit=5
+        )
+
+        assert [item.id for item in results] == [local.id]
+    finally:
+        storage.close_all()
+
+
+def test_pending_local_embedding_survives_storage_restart(tmp_path):
+    path = tmp_path / "catalog.db"
+    storage = EmbeddedStorage(path)
+    memory = storage.insert_memory("project-a", "pending local vector", importance=1)
+    storage.register_embedding_profile("local-v1", "local", "e5", "rev", 3)
+    storage.mark_embedding_pending(memory.id, "local-v1")
+    storage.close_all()
+
+    reopened = EmbeddedStorage(path)
+    try:
+        assert reopened.pending_embedding_inputs("local-v1") == [
+            (memory.id, memory.content)
+        ]
+    finally:
+        reopened.close_all()
+
+
+@pytest.mark.asyncio
+async def test_memory_service_uses_profile_vectors_for_semantic_recall(
+    tmp_path, monkeypatch
+):
+    profile = EmbeddingProfile("local-test", "local", "test", "v1", 3)
+
+    class FakeEmbeddingManager:
+        def __init__(self, **_kwargs):
+            self.local_profile = profile
+            self.external_profile = None
+            self.profiles = (profile,)
+            self.available = True
+            self.dim = 3
+            self.provider = "local"
+            self.queue_size = 0
+            self.processed_count = 0
+            self.failed_count = 0
+            self.last_selected_profile = profile.profile_id
+            self.last_fallback_reason = None
+            self.last_latency_ms = 0.1
+            self._callback = None
+
+        def set_callback(self, callback):
+            self._callback = callback
+
+        def enqueue(self, memory_id, text, profile_id=None):
+            assert profile_id in (None, profile.profile_id)
+            vector = [1.0, 0.0, 0.0] if "Parquet" in text else [0.0, 1.0, 0.0]
+            self._callback(memory_id, profile, vector)
+            self.processed_count += 1
+
+        def encode(self, _text):
+            return [1.0, 0.0, 0.0]
+
+        def encode_query(self, _text):
+            return EncodedEmbedding([1.0, 0.0, 0.0], profile)
+
+        def encode_local_query(self, _text):
+            return self.encode_query(_text)
+
+        def metrics_snapshot(self):
+            return {}
+
+        def warmup(self):
+            return True
+
+        def close(self):
+            return None
+
+        @staticmethod
+        def cosine_similarity(_left, _right):
+            return 0.0
+
+    monkeypatch.setattr(
+        "evermind_mcp.memory_service_v2.EmbeddingManager", FakeEmbeddingManager
+    )
+    service = MemoryService(
+        EverMindConfig(
+            home=tmp_path,
+            default_space="coding:test",
+            embed_enabled=True,
+            embed_warmup_on_start=False,
+            rerank_enabled=False,
+            cosine_dedup_threshold=0,
+        )
+    )
+    try:
+        target = await service.remember(
+            "Invoice exports are written as Parquet files.", importance=1
+        )
+        await service.remember(
+            "Authentication tokens rotate every seven days.", importance=1
+        )
+
+        recalled = await service.recall(
+            "Which format does billing data use?", mode="semantic", limit=1
+        )
+
+        assert recalled["results"][0]["id"] == target["id"]
+        assert recalled["embedding_profile"] == profile.profile_id
+        assert service.storage.count_profile_embeddings(profile.profile_id) == 2
+        status = await service.status()
+        assert status["embedding_profiles"] == [
+            {
+                "profile_id": profile.profile_id,
+                "provider": "local",
+                "model": "test",
+                "version": "v1",
+                "dimensions": 3,
+                "coverage": 1.0,
+                "ready": 2,
+            }
+        ]
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_incomplete_external_coverage_uses_local_baseline(
+    tmp_path, monkeypatch
+):
+    service = MemoryService(
+        EverMindConfig(
+            home=tmp_path,
+            default_space="coding:test",
+            siliconflow_api_key="sk-test",
+            embed_provider="auto",
+            embed_model="external-model",
+            embed_dim=3,
+            local_embed_model_path=tmp_path / "missing-model",
+            embed_warmup_on_start=False,
+            rerank_enabled=False,
+            graph_enabled=False,
+        )
+    )
+    try:
+        local = service.embedder.local_profile
+        external = service.embedder.external_profile
+        assert external is not None
+
+        local_target = service.storage.insert_memory(
+            service.space, "Billing exports use Parquet files.", importance=1
+        )
+        external_only = service.storage.insert_memory(
+            service.space, "Authentication tokens rotate weekly.", importance=1
+        )
+        local_vector = [1.0] + [0.0] * (local.dimensions - 1)
+        external_vector = [1.0, 0.0, 0.0]
+        service.storage.store_profile_embedding(
+            local_target.id, local.profile_id, local_vector
+        )
+        service.storage.store_profile_embedding(
+            external_only.id, external.profile_id, external_vector
+        )
+        monkeypatch.setattr(
+            service.embedder,
+            "encode_query",
+            lambda _text: EncodedEmbedding(external_vector, external),
+        )
+        monkeypatch.setattr(
+            service.embedder,
+            "encode_local_query",
+            lambda _text: EncodedEmbedding(local_vector, local),
+        )
+
+        recalled = await service.recall(
+            "Which format does billing use?", mode="semantic", limit=1, min_score=0
+        )
+        status = await service.status()
+        health = await service.health()
+
+        assert recalled["results"][0]["id"] == local_target.id
+        assert recalled["embedding_profile"] == local.profile_id
+        assert recalled["embedding_coverage"] == 0.5
+        assert (
+            recalled["embedding_fallback_reason"]
+            == "external_coverage_incomplete"
+        )
+        assert status["embeddings_stored_count"] == 1
+        assert status["embedding_coverage_percent"] == 50.0
+        assert health["embedding_coverage_percent"] == 50.0
+    finally:
+        service.close()
 
 
 def test_reranker_parses_siliconflow_response():
