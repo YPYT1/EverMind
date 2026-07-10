@@ -14,9 +14,25 @@ DATASET = ROOT / "mcp" / "tests" / "fixtures" / "retrieval-quality.json"
 MODEL_MANIFEST = ROOT / "third_party" / "model-manifest.json"
 
 
+def _artifact_stats(root: Path) -> tuple[int, int, str]:
+    records = []
+    for path in root.rglob("*"):
+        if path.is_file():
+            relative = path.relative_to(root).as_posix()
+            records.append(
+                (relative, hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size)
+            )
+    records.sort()
+    tree_hash = hashlib.sha256(
+        "".join(f"{digest}  {relative}\n" for relative, digest, _ in records).encode()
+    ).hexdigest()
+    return len(records), sum(size for _, _, size in records), tree_hash
+
+
 def test_model_manifest_pins_artifact_license_dimensions_and_corpus() -> None:
     manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
     corpus_hash = hashlib.sha256(DATASET.read_bytes()).hexdigest()
+    artifact = ROOT / manifest["artifact"]["path"]
 
     assert manifest["model_id"] == "intfloat/multilingual-e5-small"
     assert manifest["revision"] == "614241f622f53c4eeff9890bdc4f31cfecc418b3"
@@ -25,7 +41,12 @@ def test_model_manifest_pins_artifact_license_dimensions_and_corpus() -> None:
     assert manifest["query_prefix"] == "query: "
     assert manifest["document_prefix"] == "passage: "
     assert manifest["artifact"]["tree_sha256"] == (
-        "1b4ae85d85c0f6316a72339f0e725f0993d3af43727ab751e2c9ef330235b127"
+        "c78988c745782001597db940ddbb894357f130867dc77a4e13a5d5512b50c2c4"
+    )
+    assert _artifact_stats(artifact) == (
+        manifest["artifact"]["file_count"],
+        manifest["artifact"]["bytes"],
+        manifest["artifact"]["tree_sha256"],
     )
     assert manifest["corpus"]["sha256"] == corpus_hash
     for result in manifest["metrics"].values():

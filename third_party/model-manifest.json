@@ -10,9 +10,10 @@
   "document_prefix": "passage: ",
   "max_sequence_length": 512,
   "artifact": {
+    "path": "third_party/models/multilingual-e5-small",
     "file_count": 10,
     "bytes": 493292828,
-    "tree_sha256": "1b4ae85d85c0f6316a72339f0e725f0993d3af43727ab751e2c9ef330235b127"
+    "tree_sha256": "c78988c745782001597db940ddbb894357f130867dc77a4e13a5d5512b50c2c4"
   },
   "corpus": {
     "path": "mcp/tests/fixtures/retrieval-quality.json",
@@ -46,7 +47,7 @@
       "model_id": "intfloat/multilingual-e5-small",
       "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
       "artifact_bytes": 493292828,
-      "artifact_tree_sha256": "1b4ae85d85c0f6316a72339f0e725f0993d3af43727ab751e2c9ef330235b127",
+      "artifact_tree_sha256": "c78988c745782001597db940ddbb894357f130867dc77a4e13a5d5512b50c2c4",
       "meets_gate": true,
       "failed_suites": []
     }
