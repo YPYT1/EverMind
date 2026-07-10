@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .bundle_manifest import find_official_bundle_root
 from .project_detector import detect_project_space
 
 
@@ -130,10 +131,10 @@ class EverMindConfig:
         default_factory=lambda: Path.home() / "BasicMemory" / ".candidates"
     )
     basic_memory_source_dir: Path = field(
-        default_factory=lambda: _repo_root() / "third_party" / "basic-memory"
+        default_factory=lambda: _default_basic_memory_source_dir()
     )
     codebase_source_dir: Path = field(
-        default_factory=lambda: _repo_root() / "third_party" / "codebase-memory-mcp"
+        default_factory=lambda: _default_codebase_source_dir()
     )
     codebase_binary_path: Path = field(
         default_factory=lambda: _default_codebase_binary_path()
@@ -238,8 +239,8 @@ def load_config(cwd: str | None = None) -> EverMindConfig:
         graph_enabled=_env_bool("EVERMIND_GRAPH_ENABLED", True),
         archive_root=archive_root,
         archive_candidate_dir=archive_candidate_dir,
-        basic_memory_source_dir=_repo_root() / "third_party" / "basic-memory",
-        codebase_source_dir=_repo_root() / "third_party" / "codebase-memory-mcp",
+        basic_memory_source_dir=_default_basic_memory_source_dir(),
+        codebase_source_dir=_default_codebase_source_dir(),
         codebase_binary_path=_default_codebase_binary_path(),
         codebase_cli_timeout_seconds=_env_float(
             "EVERMIND_CODEBASE_CLI_TIMEOUT_SECONDS", 120.0
@@ -257,8 +258,28 @@ def _repo_root() -> Path:
 
 def _default_codebase_binary_path() -> Path:
     name = "codebase-memory-mcp.exe" if os.name == "nt" else "codebase-memory-mcp"
+    bundle_root = find_official_bundle_root()
+    if bundle_root is not None:
+        return bundle_root / "bin" / name
     return _repo_root() / "third_party" / "codebase-memory-mcp" / "build" / "c" / name
 
 
 def _default_local_embed_model_path() -> Path:
+    bundle_root = find_official_bundle_root()
+    if bundle_root is not None:
+        return bundle_root / "models" / "multilingual-e5-small"
     return _repo_root() / "third_party" / "models" / "multilingual-e5-small"
+
+
+def _default_basic_memory_source_dir() -> Path:
+    bundle_root = find_official_bundle_root()
+    if bundle_root is not None:
+        return bundle_root / "sources" / "basic-memory"
+    return _repo_root() / "third_party" / "basic-memory"
+
+
+def _default_codebase_source_dir() -> Path:
+    bundle_root = find_official_bundle_root()
+    if bundle_root is not None:
+        return bundle_root / "sources" / "codebase-memory-mcp"
+    return _repo_root() / "third_party" / "codebase-memory-mcp"

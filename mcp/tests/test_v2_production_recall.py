@@ -102,6 +102,37 @@ def test_qwen_default_without_key_uses_bundled_local_profile():
         manager.close()
 
 
+def test_config_defaults_follow_official_bundle_layout(tmp_path, monkeypatch):
+    bundle_root = (tmp_path / "EverMind").resolve()
+    monkeypatch.setattr(
+        "evermind_mcp.config_v2._load_dotenv_files", lambda _cwd=None: None
+    )
+    monkeypatch.setattr(
+        "evermind_mcp.config_v2.find_official_bundle_root",
+        lambda: bundle_root,
+        raising=False,
+    )
+    monkeypatch.setenv("EVERMIND_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("EVERMIND_LOCAL_EMBED_MODEL_PATH", raising=False)
+
+    for config in (EverMindConfig(), load_config(str(tmp_path))):
+        binary_name = (
+            "codebase-memory-mcp.exe"
+            if config.codebase_binary_path.suffix == ".exe"
+            else "codebase-memory-mcp"
+        )
+        assert config.local_embed_model_path == (
+            bundle_root / "models" / "multilingual-e5-small"
+        )
+        assert config.basic_memory_source_dir == (
+            bundle_root / "sources" / "basic-memory"
+        )
+        assert config.codebase_source_dir == (
+            bundle_root / "sources" / "codebase-memory-mcp"
+        )
+        assert config.codebase_binary_path == bundle_root / "bin" / binary_name
+
+
 def test_external_embedding_failure_falls_back_to_local(tmp_path, monkeypatch):
     manager = EmbeddingManager(
         model_name="external-model",

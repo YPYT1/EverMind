@@ -27,8 +27,15 @@ class BundleIntegrityError(RuntimeError):
     """Raised when an official runtime bundle is incomplete or modified."""
 
 
-def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None:
-    """Verify the official bundle containing ``package_dir`` when marked."""
+def find_official_bundle_root(package_dir: str | Path | None = None) -> Path | None:
+    """Return the marked official bundle root without hashing its contents."""
+    location = _load_bundle_location(package_dir)
+    return location[3] if location is not None else None
+
+
+def _load_bundle_location(
+    package_dir: str | Path | None = None,
+) -> tuple[Path, dict, Path, Path] | None:
     package = Path(package_dir) if package_dir is not None else Path(__file__).parent
     marker_path = package / OFFICIAL_BUNDLE_MARKER
     if not marker_path.is_file():
@@ -55,6 +62,15 @@ def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None
         raise BundleIntegrityError(
             "official bundle manifest does not contain the package"
         ) from exc
+    return marker_path, marker, manifest_path, bundle_root
+
+
+def verify_official_bundle(package_dir: str | Path | None = None) -> dict | None:
+    """Verify the official bundle containing ``package_dir`` when marked."""
+    location = _load_bundle_location(package_dir)
+    if location is None:
+        return None
+    marker_path, marker, manifest_path, bundle_root = location
 
     expected_manifest_hash = marker.get("manifest_sha256")
     if (

@@ -87,6 +87,15 @@ def test_complete_official_bundle_manifest_is_verified(tmp_path: Path) -> None:
     assert set(result["components"]) == set(REQUIRED_COMPONENT_FILES)
 
 
+def test_official_bundle_root_is_discovered_from_marker(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, _, _ = _write_bundle(tmp_path)
+
+    assert module.find_official_bundle_root(package_dir) == (
+        tmp_path / "EverMind"
+    ).resolve()
+
+
 def test_official_bundle_rejects_tampered_file(tmp_path: Path) -> None:
     module = _bundle_module()
     package_dir, _, _ = _write_bundle(tmp_path)
