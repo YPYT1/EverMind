@@ -1505,6 +1505,65 @@ async def test_local_basic_memory_ignores_cloud_credentials_without_network(
 
 
 @pytest.mark.asyncio
+async def test_real_stdio_ignores_poisoned_external_commands(tmp_path: Path) -> None:
+    import os
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "external-command-called.txt"
+    for command_name in ("codebase-memory-mcp", "basic-memory"):
+        shell_script = fake_bin / command_name
+        shell_script.write_text(
+            f"#!/usr/bin/env sh\necho called >> '{marker.as_posix()}'\nexit 42\n",
+            encoding="utf-8",
+        )
+        shell_script.chmod(0o755)
+        (fake_bin / f"{command_name}.cmd").write_text(
+            f'@echo off\r\necho called >> "{marker}"\r\nexit /b 42\r\n',
+            encoding="utf-8",
+        )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def local_only():\n    return True\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.update(
+        PATH=str(fake_bin) + os.pathsep + env.get("PATH", ""),
+        EVERMIND_HOME=str(tmp_path / "home"),
+        EVERMIND_WORKSPACE_ROOT=str(repo),
+        EVERMIND_ARCHIVE_ROOT=str(tmp_path / "archive"),
+        BASIC_MEMORY_CONFIG_DIR=str(tmp_path / "basic-memory"),
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from evermind_mcp.server_v2 import main_sync; main_sync()"],
+        env=env,
+    )
+
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            written = await session.call_tool(
+                "write_note",
+                {
+                    "title": "Path Isolation",
+                    "content": "local source only",
+                    "directory": "verification",
+                },
+            )
+            indexed = await session.call_tool(
+                "index_repository", {"repo_path": str(repo)}
+            )
+            assert written.isError is False, written.content[0].text
+            assert indexed.isError is False, indexed.content[0].text
+
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
 async def test_fastmcp_core_application_errors_set_protocol_error(tmp_path: Path) -> None:
     import os
 
