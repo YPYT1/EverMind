@@ -134,8 +134,9 @@ MEMORY_TOOLS: list[types.Tool] = [
         name="update_memory",
         description=(
             "Update an existing EverMind memory by ID. Use when a memory is wrong, stale, "
-            "or needs verified metadata/tags without deleting and recreating it. Rebuilds "
-            "FTS, embeddings, graph links, and briefing cache as needed."
+            "or needs verified metadata/tags. Content changes create a new current version "
+            "and retain the prior version as history. Rebuilds FTS, embeddings, graph links, "
+            "and briefing cache as needed."
         ),
         inputSchema={
             "type": "object",
@@ -230,6 +231,10 @@ MEMORY_TOOLS: list[types.Tool] = [
                     "type": "boolean",
                     "default": False,
                     "description": "If true, search across ALL known project spaces",
+                },
+                "include_expired": {
+                    "type": "boolean",
+                    "default": False,
                 },
                 "min_score": {
                     "type": "number",
@@ -634,6 +639,7 @@ async def _dispatch_core_tool(
                 all_spaces=all_spaces,
                 space=space_override,
                 min_score=args.get("min_score"),
+                include_expired=bool(args.get("include_expired", False)),
             )
 
         elif name == "forget":

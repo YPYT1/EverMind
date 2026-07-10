@@ -1919,9 +1919,6 @@ async def test_value_conflicts_are_explicitly_surfaced(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True, reason="update mutates a row instead of superseding a version"
-)
 async def test_update_preserves_superseded_fact_version(tmp_path: Path) -> None:
     service = MemoryService(_config(tmp_path))
     try:
@@ -1939,20 +1936,68 @@ async def test_update_preserves_superseded_fact_version(tmp_path: Path) -> None:
         }
         assert {"state", "supersedes_id"} <= columns
         rows = service.storage.conn.execute(
-            "SELECT id, content, state, supersedes_id FROM memories "
+            "SELECT id, content, state, valid_to, supersedes_id FROM memories "
             "WHERE content LIKE 'Release channel is %' ORDER BY created_at"
         ).fetchall()
 
         assert len(rows) == 2
         assert rows[0]["state"] == "superseded"
+        assert rows[0]["valid_to"] is not None
+        assert rows[1]["state"] == "active"
         assert rows[1]["supersedes_id"] == original["id"]
         assert replacement["id"] == rows[1]["id"]
+
+        current = await service.recall(
+            "Release channel", mode="fts", min_score=0
+        )
+        history = await service.recall(
+            "Release channel", mode="fts", min_score=0, include_expired=True
+        )
+        assert [item["id"] for item in current["results"]] == [replacement["id"]]
+        assert {item["id"] for item in history["results"]} == {
+            original["id"],
+            replacement["id"],
+        }
     finally:
         service.storage.close_all()
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="recall has no explicit expired-history switch")
+async def test_update_can_restore_an_earlier_fact_as_a_new_version(
+    tmp_path: Path,
+) -> None:
+    service = MemoryService(_config(tmp_path))
+    try:
+        beta = await service.remember("Release channel is beta", importance=1)
+        stable = await service.update_memory(
+            beta["id"], content="Release channel is stable"
+        )
+        restored = await service.update_memory(
+            stable["id"], content="Release channel is beta"
+        )
+
+        rows = service.storage.conn.execute(
+            "SELECT id, state, supersedes_id FROM memories "
+            "WHERE content LIKE 'Release channel is %' ORDER BY created_at, rowid"
+        ).fetchall()
+        current = await service.recall(
+            "Release channel", mode="fts", min_score=0
+        )
+
+        assert len(rows) == 3
+        assert [row["state"] for row in rows] == [
+            "superseded",
+            "superseded",
+            "active",
+        ]
+        assert rows[2]["supersedes_id"] == stable["id"]
+        assert restored["id"] not in {beta["id"], stable["id"]}
+        assert [item["id"] for item in current["results"]] == [restored["id"]]
+    finally:
+        service.storage.close_all()
+
+
+@pytest.mark.asyncio
 async def test_recall_schema_exposes_include_expired() -> None:
     import evermind_mcp.server_v2 as server_mod
 
@@ -1963,3 +2008,33 @@ async def test_recall_schema_exposes_include_expired() -> None:
         "type": "boolean",
         "default": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_recall_can_include_expired_working_memory(tmp_path: Path) -> None:
+    service = MemoryService(_config(tmp_path))
+    try:
+        expired = await service.remember(
+            "Temporary release checklist", importance=0
+        )
+        service.storage.conn.execute(
+            "UPDATE memories SET expires_at=? WHERE id=?",
+            (service.storage._now_ms() - 1, expired["id"]),
+        )
+        service.storage.conn.commit()
+
+        current = await service.recall(
+            "Temporary release checklist", mode="fts", min_score=0
+        )
+        history = await service.recall(
+            "Temporary release checklist",
+            mode="fts",
+            min_score=0,
+            include_expired=True,
+        )
+
+        assert current["results"] == []
+        assert [item["id"] for item in history["results"]] == [expired["id"]]
+        assert history["results"][0]["state"] == "expired"
+    finally:
+        service.storage.close_all()

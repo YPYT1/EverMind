@@ -314,8 +314,8 @@ class EmbeddedStorage:
                 conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {declaration}")
 
         rows = conn.execute(
-            "SELECT rowid, id, content, space, importance, tags, meta, created_at, updated_at "
-            "FROM memories ORDER BY created_at, rowid"
+            "SELECT rowid, id, content, space, importance, tags, meta, state, "
+            "created_at, updated_at FROM memories ORDER BY created_at, rowid"
         ).fetchall()
         canonical_by_hash: dict[str, sqlite3.Row] = {}
         duplicates: list[tuple[sqlite3.Row, sqlite3.Row]] = []
@@ -335,9 +335,13 @@ class EmbeddedStorage:
                 (project_id, project_id, row["created_at"], now),
             )
             normalized_hash = _normalized_content_hash(row["content"])
-            canonical = canonical_by_hash.get(normalized_hash)
-            if canonical is None:
-                canonical_by_hash[normalized_hash] = row
+            state = row["state"] or "active"
+            canonical = (
+                canonical_by_hash.get(normalized_hash) if state == "active" else None
+            )
+            if state != "active" or canonical is None:
+                if state == "active":
+                    canonical_by_hash[normalized_hash] = row
                 conn.execute(
                     """
                     UPDATE memories
@@ -416,9 +420,10 @@ class EmbeddedStorage:
                 )
             conn.execute("DELETE FROM memories WHERE id=?", (duplicate["id"],))
 
+        conn.execute("DROP INDEX IF EXISTS idx_memories_normalized_hash")
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_normalized_hash "
-            "ON memories(normalized_hash)"
+            "CREATE UNIQUE INDEX idx_memories_normalized_hash "
+            "ON memories(normalized_hash) WHERE state='active'"
         )
         conn.commit()
 
@@ -473,6 +478,10 @@ class EmbeddedStorage:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             expires_at=row["expires_at"],
+            state=row["state"],
+            valid_from=row["valid_from"],
+            valid_to=row["valid_to"],
+            supersedes_id=row["supersedes_id"],
             embedding_ready=bool(row["embedding_ready"]),
             score=score,
         )
@@ -544,7 +553,7 @@ class EmbeddedStorage:
                          tags, meta, created_at, updated_at, expires_at,
                          embedding_ready, normalized_hash, state, valid_from)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'active', ?)
-                    ON CONFLICT(normalized_hash) DO NOTHING
+                    ON CONFLICT DO NOTHING
                     """,
                     (
                         memory_id,
@@ -574,7 +583,8 @@ class EmbeddedStorage:
                     )
                 else:
                     row = conn.execute(
-                        "SELECT id FROM memories WHERE normalized_hash=?",
+                        "SELECT id FROM memories "
+                        "WHERE normalized_hash=? AND state='active'",
                         (normalized_hash,),
                     ).fetchone()
                     if row is None:
@@ -769,7 +779,7 @@ class EmbeddedStorage:
     ) -> "list[MemoryRow]":
         now = self._now_ms()
         params: list = [space]
-        sql = "SELECT * FROM memories WHERE space=?"
+        sql = "SELECT * FROM memories WHERE space=? AND state='active'"
         if layer is not None:
             sql += " AND layer=?"
             params.append(layer)
@@ -862,6 +872,7 @@ class EmbeddedStorage:
             JOIN memories_fts f ON m.rowid = f.rowid
             WHERE memories_fts MATCH ?
               AND m.space = ?
+              AND m.state='active'
               {extra}
               AND (m.expires_at IS NULL OR m.expires_at > ?)
             ORDER BY score
@@ -883,6 +894,7 @@ class EmbeddedStorage:
         limit: int = 10,
         layer: str | None = None,
         tags: list | None = None,
+        include_expired: bool = False,
     ) -> list[MemoryRow]:
         """Search the shared catalog; current project affects ranking, not visibility."""
         processed_query = _process_for_fts(query)
@@ -895,7 +907,14 @@ class EmbeddedStorage:
             tag_clauses = " OR ".join("m.tags LIKE ?" for _ in tags)
             extra += f" AND ({tag_clauses})"
             params.extend(f'%"{tag}"%' for tag in tags)
-        params.extend((self._now_ms(), limit))
+        validity_filter = ""
+        if not include_expired:
+            validity_filter = (
+                "AND m.state='active' "
+                "AND (m.expires_at IS NULL OR m.expires_at > ?)"
+            )
+            params.append(self._now_ms())
+        params.append(limit)
         rows = self.conn.execute(
             f"""
             SELECT m.*, bm25(memories_fts) AS score,
@@ -912,9 +931,8 @@ class EmbeddedStorage:
             FROM memories m
             JOIN memories_fts f ON m.rowid=f.rowid
             WHERE memories_fts MATCH ?
-              AND m.state='active'
               {extra}
-              AND (m.expires_at IS NULL OR m.expires_at > ?)
+              {validity_filter}
             ORDER BY current_project_source DESC, score
             LIMIT ?
             """,
@@ -962,6 +980,7 @@ class EmbeddedStorage:
                 FROM memories m
                 WHERE m.rowid IN ({placeholders})
                   AND m.space = ?
+                  AND m.state='active'
                   AND (m.expires_at IS NULL OR m.expires_at > ?)
                 """,
                 (*rowid_to_dist.keys(), space, now),
@@ -983,6 +1002,7 @@ class EmbeddedStorage:
         embedding: list[float],
         current_project: str,
         limit: int = 10,
+        include_expired: bool = False,
     ) -> list[MemoryRow]:
         if not self._vec_available:
             return []
@@ -1003,6 +1023,14 @@ class EmbeddedStorage:
                 return []
             distances = {row["memory_rowid"]: row["distance"] for row in vec_rows}
             placeholders = ",".join("?" for _ in distances)
+            validity_filter = ""
+            params: list = [current_project, *distances.keys()]
+            if not include_expired:
+                validity_filter = (
+                    "AND m.state='active' "
+                    "AND (m.expires_at IS NULL OR m.expires_at > ?)"
+                )
+                params.append(self._now_ms())
             rows = self.conn.execute(
                 f"""
                 SELECT m.rowid AS rowid, m.*,
@@ -1017,10 +1045,9 @@ class EmbeddedStorage:
                        ), m.importance) AS source_importance
                 FROM memories m
                 WHERE m.rowid IN ({placeholders})
-                  AND m.state='active'
-                  AND (m.expires_at IS NULL OR m.expires_at > ?)
+                  {validity_filter}
                 """,
-                (current_project, *distances.keys(), self._now_ms()),
+                params,
             ).fetchall()
             memories = []
             for row in rows:
@@ -1088,30 +1115,12 @@ class EmbeddedStorage:
     def expire_working_memories(self, space: str) -> int:
         now = self._now_ms()
         with self._write_lock:
-            rows = self.conn.execute(
-                """
-                SELECT rowid, id FROM memories
-                WHERE space=?
-                  AND layer='working'
-                  AND expires_at IS NOT NULL
-                  AND expires_at < ?
-                """,
-                (space, now),
-            ).fetchall()
-            for row in rows:
-                self.conn.execute(
-                    "DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],)
-                )
-                if self._vec_available:
-                    self.conn.execute(
-                        "DELETE FROM memory_vecs WHERE memory_rowid=?",
-                        (row["rowid"],),
-                    )
-                self._delete_graph_edges_for_memory(row["id"])
             cursor = self.conn.execute(
                 """
-                DELETE FROM memories
-                WHERE space=?
+                UPDATE memories
+                SET state='expired', valid_to=COALESCE(valid_to, expires_at),
+                    updated_at=MAX(updated_at, expires_at)
+                WHERE space=? AND state='active'
                   AND layer='working'
                   AND expires_at IS NOT NULL
                   AND expires_at < ?
@@ -1147,7 +1156,8 @@ class EmbeddedStorage:
         recent_rows = self.conn.execute(
             """
             SELECT * FROM memories
-            WHERE space=? AND (expires_at IS NULL OR expires_at > ?)
+            WHERE space=? AND state='active'
+              AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -1157,7 +1167,8 @@ class EmbeddedStorage:
         important_rows = self.conn.execute(
             """
             SELECT * FROM memories
-            WHERE space=? AND importance >= 1 AND (expires_at IS NULL OR expires_at > ?)
+            WHERE space=? AND state='active' AND importance >= 1
+              AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY importance DESC, updated_at DESC
             LIMIT ?
             """,
@@ -1165,7 +1176,8 @@ class EmbeddedStorage:
         ).fetchall()
 
         count_row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=?", (space,)
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND state='active'",
+            (space,),
         ).fetchone()
         total = count_row["cnt"] if count_row else 0
 
@@ -1248,13 +1260,15 @@ class EmbeddedStorage:
 
     def get_stats(self, space: str) -> dict:
         rows = self.conn.execute(
-            "SELECT layer, COUNT(*) AS cnt FROM memories WHERE space=? GROUP BY layer",
+            "SELECT layer, COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' GROUP BY layer",
             (space,),
         ).fetchall()
         by_layer = {r["layer"]: r["cnt"] for r in rows}
 
         rows = self.conn.execute(
-            "SELECT memory_type, COUNT(*) AS cnt FROM memories WHERE space=? GROUP BY memory_type",
+            "SELECT memory_type, COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' GROUP BY memory_type",
             (space,),
         ).fetchall()
         by_type = {r["memory_type"]: r["cnt"] for r in rows}
@@ -1264,7 +1278,7 @@ class EmbeddedStorage:
             SELECT COUNT(*) AS total_count,
                    MIN(created_at) AS oldest_at,
                    MAX(created_at) AS newest_at
-            FROM memories WHERE space=?
+            FROM memories WHERE space=? AND state='active'
             """,
             (space,),
         ).fetchone()
@@ -1279,7 +1293,8 @@ class EmbeddedStorage:
 
     def count_embeddings(self, space: str) -> int:
         row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND embedding_ready=1",
+            "SELECT COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' AND embedding_ready=1",
             (space,),
         ).fetchone()
         return row["cnt"] if row else 0
@@ -1290,7 +1305,7 @@ class EmbeddedStorage:
             SELECT COUNT(*) AS cnt
             FROM memories m
             JOIN memories_fts f ON m.rowid = f.rowid
-            WHERE m.space=?
+            WHERE m.space=? AND m.state='active'
             """,
             (space,),
         ).fetchone()
@@ -1316,7 +1331,7 @@ class EmbeddedStorage:
             FROM (
                 SELECT content
                 FROM memories
-                WHERE space=?
+                WHERE space=? AND state='active'
                 GROUP BY content
                 HAVING COUNT(*) > 1
             )
@@ -1335,7 +1350,7 @@ class EmbeddedStorage:
             (space,),
         ).fetchone()
         total_row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=?",
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND state='active'",
             (space,),
         ).fetchone()
         try:
@@ -1397,6 +1412,192 @@ class EmbeddedStorage:
     def update_memory_content(self, memory_id: str, new_content: str) -> None:
         """Update the content of an existing memory (used by fuzzy dedup merge)."""
         self.update_memory(memory_id, content=new_content)
+
+    def supersede_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str,
+        layer: str,
+        memory_type: str,
+        importance: int,
+        tags: list,
+        meta: dict,
+    ) -> "MemoryRow | None":
+        """Atomically replace an active memory while retaining its history."""
+        current = self.conn.execute(
+            "SELECT * FROM memories WHERE id=? AND state='active'", (memory_id,)
+        ).fetchone()
+        if current is None:
+            return None
+
+        normalized_hash = _normalized_content_hash(content)
+        current_hash = current["normalized_hash"] or _normalized_content_hash(
+            current["content"]
+        )
+        if normalized_hash == current_hash:
+            return self.update_memory(
+                memory_id,
+                content=content,
+                layer=layer,
+                memory_type=memory_type,
+                importance=importance,
+                tags=tags,
+                meta=meta,
+            )
+
+        now = self._now_ms()
+        replacement_id = str(uuid.uuid4())
+        tags_json = json.dumps(tags)
+        meta_json = json.dumps(meta)
+        expires_at = now + 24 * 3600 * 1000 if layer == "working" else None
+
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                old = conn.execute(
+                    "SELECT rowid, * FROM memories WHERE id=? AND state='active'",
+                    (memory_id,),
+                ).fetchone()
+                if old is None:
+                    conn.rollback()
+                    return None
+
+                canonical = conn.execute(
+                    "SELECT rowid, * FROM memories "
+                    "WHERE normalized_hash=? AND state='active'",
+                    (normalized_hash,),
+                ).fetchone()
+                if canonical is None:
+                    conn.execute(
+                        """
+                        INSERT INTO memories
+                            (id, content, space, layer, memory_type, role, importance,
+                             tags, meta, created_at, updated_at, expires_at,
+                             embedding_ready, normalized_hash, state, valid_from,
+                             supersedes_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?,
+                                'active', ?, ?)
+                        """,
+                        (
+                            replacement_id,
+                            content,
+                            old["space"],
+                            layer,
+                            memory_type,
+                            old["role"],
+                            importance,
+                            tags_json,
+                            meta_json,
+                            now,
+                            now,
+                            expires_at,
+                            normalized_hash,
+                            now,
+                            memory_id,
+                        ),
+                    )
+                    replacement_rowid = conn.execute(
+                        "SELECT last_insert_rowid()"
+                    ).fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                        (replacement_rowid, _process_for_fts(content), tags_json),
+                    )
+                else:
+                    replacement_id = canonical["id"]
+                    conn.execute(
+                        """
+                        UPDATE memories
+                        SET layer=?, memory_type=?, importance=?, tags=?, meta=?,
+                            updated_at=?, expires_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            layer,
+                            memory_type,
+                            importance,
+                            tags_json,
+                            meta_json,
+                            now,
+                            expires_at,
+                            replacement_id,
+                        ),
+                    )
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE rowid=?", (canonical["rowid"],)
+                    )
+                    conn.execute(
+                        "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                        (canonical["rowid"], _process_for_fts(content), tags_json),
+                    )
+
+                sources = conn.execute(
+                    "SELECT * FROM memory_sources WHERE memory_id=? AND active=1",
+                    (memory_id,),
+                ).fetchall()
+                for source in sources:
+                    self._attach_source_row(
+                        conn,
+                        memory_id=replacement_id,
+                        project_id=source["project_id"],
+                        workspace_id=source["workspace_id"],
+                        importance=source["importance"],
+                        tags_json=source["tags"],
+                        evidence=source["evidence"],
+                        meta_json=source["meta"],
+                        first_observed_at=source["first_observed_at"],
+                        last_observed_at=now,
+                    )
+                if not sources:
+                    self._attach_source_row(
+                        conn,
+                        memory_id=replacement_id,
+                        project_id=old["space"],
+                        workspace_id="",
+                        importance=importance,
+                        tags_json=tags_json,
+                        evidence=meta.get("evidence"),
+                        meta_json=meta_json,
+                        first_observed_at=now,
+                        last_observed_at=now,
+                    )
+
+                conn.execute(
+                    """
+                    UPDATE memory_sources
+                    SET importance=?, tags=?, evidence=?, meta=?, last_observed_at=?
+                    WHERE memory_id=? AND project_id=?
+                    """,
+                    (
+                        importance,
+                        tags_json,
+                        meta.get("evidence"),
+                        meta_json,
+                        now,
+                        replacement_id,
+                        old["space"],
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE memories
+                    SET state='superseded', valid_to=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (now, now, memory_id),
+                )
+                self._delete_graph_edges_for_memory(memory_id)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        row = self.conn.execute(
+            "SELECT * FROM memories WHERE id=?", (replacement_id,)
+        ).fetchone()
+        return self._row_to_memory(row) if row else None
 
     def update_memory(
         self,
@@ -1629,7 +1830,9 @@ class EmbeddedStorage:
                 if not memory_id:
                     continue
                 mem_row = self.conn.execute(
-                    "SELECT * FROM memories WHERE id=?", (memory_id,)
+                    "SELECT * FROM memories WHERE id=? AND state='active' "
+                    "AND (expires_at IS NULL OR expires_at > ?)",
+                    (memory_id, self._now_ms()),
                 ).fetchone()
                 if mem_row:
                     if mem_row["id"] in seen:
@@ -1752,8 +1955,10 @@ class EmbeddedStorage:
 
     def reindex_graph(self, space: str | None = None) -> dict:
         """Rebuild graph nodes/edges from current memory content."""
-        params: tuple = (space,) if space else ()
-        where = "WHERE space=?" if space else ""
+        now = self._now_ms()
+        params: tuple = (space, now) if space else (now,)
+        where = "WHERE space=? AND" if space else "WHERE"
+        where += " state='active' AND (expires_at IS NULL OR expires_at > ?)"
         rows = self.conn.execute(
             f"SELECT id, content, space FROM memories {where}",
             params,
@@ -1791,7 +1996,10 @@ class EmbeddedStorage:
     # ------------------------------------------------------------------
 
     def export_memories(self, space: str, layer: str = None) -> list:
-        sql = "SELECT * FROM memories WHERE space=? AND (expires_at IS NULL OR expires_at > ?)"
+        sql = (
+            "SELECT * FROM memories WHERE space=? AND state='active' "
+            "AND (expires_at IS NULL OR expires_at > ?)"
+        )
         params = [space, self._now_ms()]
         if layer:
             sql += " AND layer=?"
@@ -1811,7 +2019,8 @@ class EmbeddedStorage:
     def compact_episodic(self, space: str, older_than_days: int = 30) -> dict:
         cutoff_ms = self._now_ms() - (older_than_days * 24 * 3600 * 1000)
         old_rows = self.conn.execute(
-            "SELECT * FROM memories WHERE space=? AND layer='episodic' AND created_at < ?",
+            "SELECT * FROM memories WHERE space=? AND state='active' "
+            "AND layer='episodic' AND created_at < ?",
             (space, cutoff_ms),
         ).fetchall()
         if not old_rows:

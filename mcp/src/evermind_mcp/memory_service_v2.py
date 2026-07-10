@@ -729,6 +729,7 @@ class MemoryService:
         tags: list = None,
         all_spaces: bool = False,
         min_score: float | None = None,
+        include_expired: bool = False,
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
@@ -763,6 +764,7 @@ class MemoryService:
                 limit=candidate_limit,
                 layer=layer,
                 tags=tags,
+                include_expired=include_expired,
             )
             if not fts_results:
                 fts_results = self._search_entity_fallbacks(
@@ -771,6 +773,7 @@ class MemoryService:
                     candidate_limit,
                     layer=layer,
                     tags=tags,
+                    include_expired=include_expired,
                 )
 
         # Semantic / vector search
@@ -781,6 +784,7 @@ class MemoryService:
                     vec,
                     space,
                     limit=candidate_limit,
+                    include_expired=include_expired,
                 )
                 if layer:
                     vec_results = [r for r in vec_results if r.layer == layer]
@@ -845,6 +849,7 @@ class MemoryService:
                 "count": 0,
                 "query": query,
                 "all_spaces": all_spaces,
+                "include_expired": include_expired,
                 "latency_ms": latency_ms,
                 "rerank_applied": False,
                 "rerank_fallback_reason": "no_candidates",
@@ -892,6 +897,7 @@ class MemoryService:
             "count": len(final_list),
             "query": query,
             "all_spaces": all_spaces,
+            "include_expired": include_expired,
             "latency_ms": latency_ms,
             "rerank_applied": rerank_applied,
             "rerank_fallback_reason": rerank_fallback,
@@ -938,7 +944,7 @@ class MemoryService:
         memory_type: str | None = None,
         meta: dict | None = None,
     ) -> dict:
-        """Update a memory by ID and rebuild derived indexes as needed."""
+        """Update metadata in place or create a replacement content version."""
         existing = self.storage.get_memory(memory_id)
         if existing is None:
             return {"updated": False, "id": memory_id, "error": "not found"}
@@ -995,15 +1001,25 @@ class MemoryService:
                     ],
                 }
 
-        updated = self.storage.update_memory(
-            memory_id,
-            content=new_content,
-            layer=new_layer,
-            memory_type=new_type,
-            importance=new_importance,
-            tags=new_tags,
-            meta=new_meta,
-        )
+        if content_changed:
+            updated = self.storage.supersede_memory(
+                memory_id,
+                content=new_content,
+                layer=new_layer,
+                memory_type=new_type,
+                importance=new_importance,
+                tags=new_tags,
+                meta=new_meta,
+            )
+        else:
+            updated = self.storage.update_memory(
+                memory_id,
+                layer=new_layer,
+                memory_type=new_type,
+                importance=new_importance,
+                tags=new_tags,
+                meta=new_meta,
+            )
         if updated is None:
             return {"updated": False, "id": memory_id, "error": "not found"}
 
@@ -1019,10 +1035,11 @@ class MemoryService:
         conflicts = self._detect_conflicts(updated.content, updated.tags, updated.meta)
         self.storage.log_event(
             updated.space,
-            "memory_updated",
+            "memory_superseded" if updated.id != memory_id else "memory_updated",
             updated.id,
             {
                 "content_changed": content_changed,
+                "previous_id": memory_id if updated.id != memory_id else None,
                 "importance": updated.importance,
                 "layer": updated.layer,
                 "type": updated.memory_type,
@@ -1032,7 +1049,8 @@ class MemoryService:
         return {
             "updated": True,
             "id": updated.id,
-            "action": "updated",
+            "action": "superseded" if updated.id != memory_id else "updated",
+            "supersedes_id": memory_id if updated.id != memory_id else None,
             "layer": updated.layer,
             "type": updated.memory_type,
             "importance": updated.importance,
@@ -1477,6 +1495,7 @@ class MemoryService:
         *,
         layer: str | None = None,
         tags: list | None = None,
+        include_expired: bool = False,
     ) -> list:
         candidates = []
         seen: set[str] = set()
@@ -1492,6 +1511,7 @@ class MemoryService:
                 limit=limit,
                 layer=layer,
                 tags=tags,
+                include_expired=include_expired,
             ):
                 if memory.id in seen:
                     continue

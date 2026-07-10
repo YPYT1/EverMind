@@ -146,10 +146,12 @@ async def test_update_memory_corrects_content_indexes_graph_and_metadata(tmp_pat
     assert updated["type"] == "semantic"
     assert updated["tags"] == ["codebase-verified"]
     assert updated["meta"]["source"] == "codebase"
+    assert updated["id"] != created["id"]
+    assert updated["supersedes_id"] == created["id"]
     assert all(item["id"] != created["id"] for item in old_recall["results"])
-    assert new_recall["results"][0]["id"] == created["id"]
+    assert new_recall["results"][0]["id"] == updated["id"]
     assert old_graph["count"] == 0
-    assert new_graph["related_memories"][0]["memory"]["id"] == created["id"]
+    assert new_graph["related_memories"][0]["memory"]["id"] == updated["id"]
 
 
 @pytest.mark.asyncio
@@ -183,7 +185,8 @@ async def test_server_dispatches_update_memory(tmp_path, monkeypatch):
     )
 
     assert updated["updated"] is True
-    assert updated["id"] == remembered["id"]
+    assert updated["id"] != remembered["id"]
+    assert updated["supersedes_id"] == remembered["id"]
     assert updated["tags"] == ["codebase-verified"]
     server_mod._svc = None
 

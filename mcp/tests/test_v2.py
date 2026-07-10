@@ -222,8 +222,8 @@ class TestEmbeddedStorage:
 
     def test_working_memory_expires(self, storage: EmbeddedStorage):
         """
-        A working-layer row with expires_at in the past is removed by
-        expire_working_memories.
+        A working-layer row with expires_at in the past is retained as history
+        but excluded from default retrieval.
         """
         space = "coding:expire"
         past_ms = int(time.time() * 1000) - 60_000  # 1 minute ago
@@ -235,11 +235,14 @@ class TestEmbeddedStorage:
         count = storage.expire_working_memories(space)
         assert count == 1
 
-        remaining = storage.conn.execute(
-            "SELECT COUNT(*) AS c FROM memories WHERE space=? AND layer='working'",
+        expired = storage.conn.execute(
+            "SELECT state, valid_to FROM memories "
+            "WHERE space=? AND layer='working'",
             (space,),
-        ).fetchone()["c"]
-        assert remaining == 0
+        ).fetchone()
+        assert expired["state"] == "expired"
+        assert expired["valid_to"] == past_ms
+        assert storage.list_memories(space) == []
 
     def test_working_memory_not_expired_if_future(self, storage: EmbeddedStorage):
         """A working row with a future expires_at must NOT be removed."""

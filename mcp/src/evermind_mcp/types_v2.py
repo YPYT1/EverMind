@@ -21,6 +21,10 @@ class MemoryRow:
     tags: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
     expires_at: Optional[int] = None
+    state: str = "active"
+    valid_from: Optional[int] = None
+    valid_to: Optional[int] = None
+    supersedes_id: Optional[str] = None
     embedding_ready: bool = False
     score: float = 0.0
 
@@ -37,6 +41,11 @@ class MemoryRow:
             "meta": self.meta,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "expires_at": self.expires_at,
+            "state": self.state,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "supersedes_id": self.supersedes_id,
             "score": round(self.score, 4),
         }
 
