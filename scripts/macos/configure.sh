@@ -47,7 +47,7 @@ if [[ "$NON_INTERACTIVE" != "1" ]]; then
 fi
 
 info "Preparing local runtime and generated MCP config."
-EVERMIND_HOME="$EVERMIND_HOME" SKIP_TOOL_INSTALL=1 bash "$PROJECT_ROOT/scripts/macos/install-all.sh"
+EVERMIND_HOME="$EVERMIND_HOME" bash "$PROJECT_ROOT/scripts/macos/install-all.sh"
 
 ENV_PATH="$PROJECT_ROOT/.env"
 set_env_line "$ENV_PATH" "EVEROS_LLM__API_KEY" "$LLM_API_KEY"

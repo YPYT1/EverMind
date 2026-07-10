@@ -180,7 +180,7 @@ fetch_history · propose_archive_update · commit_archive_update
 Agent 不清楚何时调 briefing 还是 recall，不知道何时轮询 request_status，
 保存重要内容要走三步。
 
-> 当前实现已演进为统一 42 工具面：14 个 memory 工具、14 个 codebase graph 工具、14 个 Basic Memory archive 工具。以 `docs/mcp-tools.md` 和 `server_v2.py` 为准。
+> 当前实现已演进为统一 42 工具面：14 个 memory 工具、14 个内置 code graph 工具、14 个内置 archive 工具。以 `docs/mcp-tools.md` 和 `server_v2.py` 为准。
 
 ### v2 核心记忆工具
 

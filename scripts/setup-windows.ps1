@@ -152,16 +152,16 @@ if ($smokeResult -match "ok") {
 }
 
 # ---------------------------------------------------------------------------
-# SECTION 3: Install integrated engines
+# SECTION 3: Configure built-in engines
 # ---------------------------------------------------------------------------
 
-Write-Header "Installing Integrated Code Graph and Archive Engines"
+Write-Header "Configuring Built-in Code Graph and Archive Engines"
 
 & (Join-Path $EverMindRoot "scripts\windows\install-all.ps1") -ProjectRoot $EverMindRoot -EverMindHome "$env:USERPROFILE\.evermind"
 if ($LASTEXITCODE -ne 0) {
-    Write-FAIL "Integrated engine installation failed."
+    Write-FAIL "Built-in engine configuration failed."
 }
-Write-OK "Integrated engines installed. Users still register only the evermind MCP server."
+Write-OK "Built-in engines configured. Users register only the evermind MCP server."
 
 # ---------------------------------------------------------------------------
 # SECTION 4: Detect Config Paths
@@ -264,7 +264,7 @@ Write-Host "    - git: presence checked (optional)" -ForegroundColor White
 Write-Host "    - sentence-transformers: availability checked" -ForegroundColor White
 Write-Host "    - sqlite-vec: availability checked" -ForegroundColor White
 Write-Host "    - EverMind MCP server: dependencies synced and smoke-tested" -ForegroundColor White
-Write-Host "    - Integrated engines: code graph and archive installed/configured" -ForegroundColor White
+Write-Host "    - Built-in engines: code graph and archive configured" -ForegroundColor White
 Write-Host "    - Claude Desktop config: $ClaudeConfigPath" -ForegroundColor White
 Write-Host "    - Cursor config: $CursorConfigPath" -ForegroundColor White
 Write-Host "    - Memory directory: $MemDir" -ForegroundColor White

@@ -10,7 +10,7 @@ info_warn() { printf '[WARN] %s\n' "$1"; }
 
 [[ -f "$PROJECT_ROOT/.env" ]] && pass ".env exists" || warn ".env missing; run scripts/macos/install.sh"
 command -v uv >/dev/null 2>&1 && pass "uv is available" || warn "uv is not available"
-[[ -f "$PROJECT_ROOT/mcp/pyproject.toml" ]] && pass "MCP bridge exists" || warn "MCP bridge missing"
+[[ -f "$PROJECT_ROOT/mcp/pyproject.toml" ]] && pass "MCP interface exists" || warn "MCP interface missing"
 [[ -f "$PROJECT_ROOT/skills/evermind/SKILL.md" ]] && pass "umbrella skill exists" || warn "umbrella skill missing"
 [[ -f "$PROJECT_ROOT/templates/evermind-archive-project/项目概览.md" ]] && pass "EverMind Archive templates exist" || warn "EverMind Archive templates missing"
 

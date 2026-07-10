@@ -1,6 +1,6 @@
 # EverMind MCP
 
-EverMind MCP is the local-first MCP bridge shipped inside EverMind. It exposes memory, codebase graph, and archive tools used by Codex, Claude Code, Cursor, Devin, and other MCP clients.
+EverMind MCP is the local-first MCP interface shipped inside EverMind. It exposes source-fused memory, codebase graph, and archive tools used by Codex, Claude Code, Cursor, Devin, and other MCP clients.
 
 ## Start
 

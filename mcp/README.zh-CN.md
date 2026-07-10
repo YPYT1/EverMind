@@ -1,6 +1,6 @@
 # EverMind MCP
 
-EverMind MCP 是 EverMind 内置的本地优先 MCP bridge，供 Codex、Claude Code、Cursor、Devin 和其他 MCP 客户端调用。
+EverMind MCP 是 EverMind 内置的本地优先 MCP 接口，供 Codex、Claude Code、Cursor、Devin 和其他 MCP 客户端调用；记忆、代码图谱和归档能力都走源码深度融合路线。
 
 ## 启动
 

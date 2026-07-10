@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-EverMind v2 exposes one unified MCP server with 42 tools: 14 memory tools, 14 Codebase Memory graph tools, and 14 Basic Memory archive tools. Agents only need the `evermind` MCP entry.
+EverMind v2 exposes one unified MCP server with 42 tools: 14 memory tools, 14 built-in code graph tools, and 14 built-in archive tools. Agents only need the `evermind` MCP entry.
 
 ## briefing
 
@@ -223,9 +223,9 @@ The update path rebuilds FTS, refreshes embeddings, replaces graph links when co
 
 ---
 
-## Codebase Memory Tools
+## EverMind Code Graph Tools
 
-These tools are exposed by EverMind but executed by the bundled `codebase-memory-mcp` engine:
+These tools are exposed by EverMind and run through its built-in local code graph index:
 
 `index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`.
 
@@ -233,13 +233,13 @@ Use them before writing project facts into memory. Stable code facts should be s
 
 ---
 
-## Basic Memory Archive Tools
+## EverMind Archive Tools
 
-These tools are exposed by EverMind but executed through the installed Basic Memory CLI:
+These tools are exposed by EverMind and run through the built-in local Markdown archive:
 
 `write_note`, `read_note`, `delete_note`, `edit_note`, `build_context`, `recent_activity`, `search_notes`, `list_memory_projects`, `list_workspaces`, `schema_validate`, `schema_infer`, `schema_diff`, `propose_basic_memory_update`, `commit_basic_memory_update`.
 
-`propose_basic_memory_update` writes a candidate only. `commit_basic_memory_update` requires `confirmed=true`.
+`propose_basic_memory_update` writes an EverMind archive candidate only. `commit_basic_memory_update` requires `confirmed=true`.
 
 ---
 

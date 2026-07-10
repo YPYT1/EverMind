@@ -50,8 +50,8 @@ The MCP server is a Python package started by the AI client via `uv run`. It exp
 - `status()` / `health()` — inspect counts, coverage, latency, and model health
 - `export(format, layer)` / `compact(older_than_days)` — audit and summarize memory
 - `tags()` / `reindex(all_spaces)` / `list_spaces()` — maintain indexes and multi-project state
-- Codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc.) — explore code through the bundled Codebase Memory engine
-- Archive tools (`search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, etc.) — bridge reviewed Basic Memory project notes
+- Codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc.) — explore code through the built-in EverMind code graph engine; it prefers the vendored MIT codebase-memory-mcp tree-sitter/Hybrid-LSP backend when built and falls back to the Python native graph
+- Archive tools (`search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, etc.) — manage reviewed EverMind archive project notes
 
 No external service. No HTTP. No API keys needed for basic use; embedding, rerank, and LLM summaries are optional.
 

@@ -124,7 +124,7 @@ uv pip install sqlite-vec sentence-transformers
 
 ## MCPツール
 
-EverMind は同じ `evermind` MCP サーバーから 42 個のツールを公開します：14 個のメモリツール、14 個のコードグラフツール、14 個の Basic Memory アーカイブツール。
+EverMind は同じ `evermind` MCP サーバーから 42 個のツールを公開します：14 個のメモリツール、14 個の内蔵コードグラフツール、14 個の内蔵アーカイブツール。外部 Basic Memory CLI や codebase-memory バイナリは不要です。
 
 | ツール | 目的 |
 |--------|------|

@@ -131,7 +131,7 @@ The script checks Python 3.11+, installs uv if missing, syncs dependencies, and 
 
 ### Codebase and archive engines
 
-EverMind exposes 42 tools through the same `evermind` MCP server. `scripts/windows/install-all.ps1` and `scripts/macos/install-all.sh` install `codebase-memory-mcp v0.9.0` and `basic-memory v0.22.1` as internal engines; clients still register only EverMind.
+EverMind exposes 42 tools through the same `evermind` MCP server. Code exploration uses the built-in local code graph engine. On this branch, the MIT `codebase-memory-mcp` C/tree-sitter/Hybrid-LSP source is vendored under `third_party/codebase-memory-mcp` and is used as the high-precision in-repo backend when built; the Python native graph remains the local fallback. Archive notes use the built-in local archive engine backed by Markdown files. No external Basic Memory CLI, cloud account, or PATH-installed codebase-memory binary is required; clients register only EverMind.
 
 For new projects, run `index_repository`, then `get_architecture`/`search_code`, then save verified findings:
 

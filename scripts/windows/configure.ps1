@@ -8,6 +8,7 @@ param(
   [string]$RerankApiKey = "",
   [switch]$NonInteractive,
   [switch]$CopySkillsInsteadOfSymlink,
+  [switch]$SkipToolchainInstall,
   [switch]$RunChecks
 )
 
@@ -42,7 +43,7 @@ if (-not $NonInteractive) {
 }
 
 Info "Preparing local runtime and generated MCP config."
-& (Join-Path $PSScriptRoot "install-all.ps1") -ProjectRoot $ProjectRoot -EverMindHome $EverMindHome -SkipToolInstall
+& (Join-Path $PSScriptRoot "install-all.ps1") -ProjectRoot $ProjectRoot -EverMindHome $EverMindHome -SkipToolchainInstall:$SkipToolchainInstall
 
 $envPath = Join-Path $ProjectRoot ".env"
 Set-EnvLine -EnvPath $envPath -Name "EVEROS_LLM__API_KEY" -Value $LlmApiKey

@@ -12,3 +12,12 @@ tmp/
 generated/
 tools/
 config/evermind.yaml
+third_party/codebase-memory-mcp/internal/cbm/vendored/grammars/lean/parser.c
+third_party/codebase-memory-mcp/build/
+third_party/basic-memory/.venv/
+third_party/basic-memory/.pytest_cache/
+third_party/basic-memory/.ruff_cache/
+third_party/basic-memory/.mypy_cache/
+third_party/basic-memory/dist/
+third_party/basic-memory/build/
+third_party/basic-memory/*.egg-info/

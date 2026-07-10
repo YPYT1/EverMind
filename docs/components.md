@@ -12,9 +12,10 @@ The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI c
 - `server_v2.py` — unified MCP server and tool dispatch
 - `memory_service_v2.py` — business logic: remember, recall, briefing, dedup
 - `storage.py` — SQLite + FTS5 + sqlite-vec storage layer
-- `codebase_engine.py` — Codebase Memory CLI bridge
-- `archive_bridge.py` — Basic Memory CLI/candidate bridge
-- `tool_bridge.py` — subprocess JSON/text command bridge
+- `codebase_engine.py` — built-in EverMind source-fused code graph engine
+- `archive_engine.py` — built-in source-fused Markdown archive and candidate workflow
+- `provider_boundary.py` — explicit local/cloud provider boundary for future modes
+- `tool_errors.py` — shared machine-readable error envelopes
 - `embedding.py` — optional local sentence-transformers with background queue
 - `project_detector.py` — git remote → project slug auto-detection
 - `config_v2.py` — zero-config loader, 4 optional env vars
@@ -32,7 +33,7 @@ Available skills:
 
 ## Code Graph and Archive Engines
 
-EverMind exposes Codebase Memory and Basic Memory through the same MCP server. The code graph bridge calls the bundled `codebase-memory-mcp` executable. The archive bridge calls the installed `basic-memory` CLI and keeps Basic Memory writes behind the candidate/confirmation workflow.
+EverMind exposes code graph and archive capabilities through the same MCP server. The built-in local code graph engine prefers the vendored MIT `codebase-memory-mcp` source under `third_party/codebase-memory-mcp` when its in-repo binary has been built, giving tree-sitter and Hybrid-LSP graph extraction without a PATH-installed external binary. If that binary is absent, EverMind falls back to its Python native local index. The built-in local Markdown archive is source-fused with `third_party/basic-memory` semantics and keeps reviewed archive updates behind the candidate/confirmation workflow. Users do not need external Basic Memory or codebase-memory binaries.
 
 ## Storage
 

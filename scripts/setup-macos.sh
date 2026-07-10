@@ -84,13 +84,13 @@ uv run --directory "$MCP_DIR" python -c "from evermind_mcp.config_v2 import load
   && ok "Import test passed" \
   || fail "Import test failed. Run: uv sync --directory mcp"
 
-# ─── Section 3: Detect Config Paths ──────────────────────────────────────────
+# ─── Section 3: Configure Built-in Engines ───────────────────────────────────
 
-header "Installing Integrated Code Graph and Archive Engines"
+header "Configuring Built-in Code Graph and Archive Engines"
 
 EVERMIND_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 bash "$EVERMIND_ROOT/scripts/macos/install-all.sh"
-ok "Integrated engines installed. Users still register only the evermind MCP server."
+ok "Built-in engines configured. Users register only the evermind MCP server."
 
 # ─── Section 4: Detect Config Paths ──────────────────────────────────────────
 
