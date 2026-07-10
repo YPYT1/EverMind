@@ -320,6 +320,44 @@ async def test_memory_service_uses_profile_vectors_for_semantic_recall(
 
 
 @pytest.mark.asyncio
+async def test_semantic_near_duplicates_are_not_auto_merged(tmp_path, monkeypatch):
+    service = MemoryService(
+        EverMindConfig(
+            home=tmp_path,
+            default_space="coding:test",
+            embed_enabled=True,
+            embed_warmup_on_start=False,
+            rerank_enabled=False,
+            graph_enabled=False,
+            cosine_dedup_threshold=0.95,
+        )
+    )
+    monkeypatch.setattr(service.embedder, "encode", lambda _text: [0.0] * 384)
+    monkeypatch.setattr(service.embedder, "enqueue", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service.storage,
+        "search_vec",
+        lambda *_args, **_kwargs: pytest.fail(
+            "semantic dedup must not query the legacy vector table"
+        ),
+    )
+    try:
+        first = await service.remember(
+            "Invoices use Parquet for export.", importance=1
+        )
+        second = await service.remember(
+            "Billing exports are stored in Parquet format.", importance=1
+        )
+
+        assert first["action"] == "stored"
+        assert second["action"] == "stored"
+        assert first["id"] != second["id"]
+        assert second["similar_merged"] is False
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
 async def test_incomplete_external_coverage_uses_local_baseline(
     tmp_path, monkeypatch
 ):

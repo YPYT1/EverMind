@@ -671,42 +671,6 @@ class MemoryService:
                 "similar_merged": True,
             }
 
-        # Cosine dedup: merge near-duplicates above threshold
-        if self.embedder.available and self.config.cosine_dedup_threshold > 0:
-            new_vec = self.embedder.encode(content)
-            if new_vec is not None:
-                similar_vecs = self.storage.search_vec(new_vec, space, limit=3)
-                for candidate in similar_vecs:
-                    cand_vec = self.embedder.encode(candidate.content)
-                    if cand_vec is not None:
-                        sim = self.embedder.cosine_similarity(new_vec, cand_vec)
-                        if sim >= self.config.cosine_dedup_threshold:
-                            self.storage.update_memory_content(candidate.id, content)
-                            if self.config.graph_enabled:
-                                entities = self.storage.extract_entities_from_content(
-                                    content
-                                )
-                                if entities:
-                                    self.storage.link_memory_to_entities(
-                                        candidate.id,
-                                        space,
-                                        entities,
-                                    )
-                            self.storage.log_event(
-                                space,
-                                "remember_merged",
-                                candidate.id,
-                                {"reason": "cosine_similarity", "score": round(sim, 4)},
-                            )
-                            return {
-                                "id": candidate.id,
-                                "action": "merged",
-                                "layer": candidate.layer,
-                                "type": candidate.memory_type,
-                                "similar_merged": True,
-                                "similarity": round(sim, 4),
-                            }
-
         # Insert new memory
         meta = dict(meta or {})
         memory, inserted = self.storage.insert_memory_atomic(
