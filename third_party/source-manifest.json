@@ -31,14 +31,20 @@
     "upstream_git_tree": "1fbf6b2a8b4136f000b2dd579a03a9bbdd1eda26",
     "license": "AGPL-3.0-or-later",
     "file_count": 1005,
-    "source_bytes": 11156797,
-    "tree_sha256": "e0ced5e1ec90d09cb98e6ddf1b09e20fde83fef948179901e5a03b6e7145e858",
+    "source_bytes": 11156764,
+    "tree_sha256": "e003691a1fa4c7da66b4c27c70981cbdbec9b7982fe381b98d9e39d0dcbe13f8",
     "exact_upstream_copy": false,
     "local_overlays": [
       {
         "id": "windows_short_path_watch_events",
         "paths": [
           "src/basic_memory/sync/watch_service.py"
+        ]
+      },
+      {
+        "id": "zero_project_lifecycle",
+        "paths": [
+          "src/basic_memory/services/project_service.py"
         ]
       }
     ]

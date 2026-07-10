@@ -12,6 +12,7 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 
 from .storage import EmbeddedStorage
 from .embedding import EmbeddingManager
@@ -261,6 +262,7 @@ class MemoryService:
         *,
         project: str | None = None,
         project_name: str | None = None,
+        remove_basic_project: Callable[[dict], Awaitable[None]] | None = None,
     ) -> dict:
         """Detach one unified project while preserving all durable user data."""
         if not project and not project_name:
@@ -375,6 +377,44 @@ class MemoryService:
                     "retryable": True,
                 }
             completed_steps.add(step)
+            self._record_project_operation_steps(operation_id, completed_steps)
+
+        binding = self.storage.conn.execute(
+            """
+            SELECT basic_external_id, basic_name, basic_path
+            FROM basic_project_bindings
+            WHERE project_id=?
+            """,
+            (project_id,),
+        ).fetchone()
+        if "basic_project" not in completed_steps:
+            if binding is not None and remove_basic_project is not None:
+                try:
+                    await remove_basic_project(dict(binding))
+                except Exception as exc:
+                    self.storage.conn.execute(
+                        """
+                        UPDATE project_operations
+                        SET error=?, completed_steps=?, updated_at=?
+                        WHERE operation_id=?
+                        """,
+                        (
+                            json.dumps({"message": str(exc)}),
+                            json.dumps(sorted(completed_steps)),
+                            int(time.time() * 1000),
+                            operation_id,
+                        ),
+                    )
+                    self.storage.conn.commit()
+                    return {
+                        "ok": False,
+                        "code": "PROJECT_DETACH_BASIC_FAILED",
+                        "project_id": project_id,
+                        "operation_id": operation_id,
+                        "message": str(exc),
+                        "retryable": True,
+                    }
+            completed_steps.add("basic_project")
             self._record_project_operation_steps(operation_id, completed_steps)
 
         if "basic_binding" not in completed_steps:

@@ -1173,6 +1173,275 @@ async def test_create_memory_project_records_the_unified_catalog_binding(
 
 
 @pytest.mark.asyncio
+async def test_real_stdio_executes_all_local_basic_memory_calls(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    notes = tmp_path / "compat-notes"
+    notes.mkdir()
+    env = dict(os.environ)
+    env.update(
+        EVERMIND_HOME=str(tmp_path / "home"),
+        EVERMIND_WORKSPACE_ROOT=str(notes),
+        EVERMIND_ARCHIVE_ROOT=str(tmp_path / "archive"),
+        BASIC_MEMORY_CONFIG_DIR=str(tmp_path / "basic-memory"),
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from evermind_mcp.server_v2 import main_sync; main_sync()"],
+        env=env,
+    )
+    called: set[str] = set()
+
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+
+            async def call(name: str, arguments: dict | None = None):
+                result = await session.call_tool(name, arguments or {})
+                assert result.isError is False, result.content[0].text
+                called.add(name)
+                structured = result.structuredContent
+                assert isinstance(structured, dict)
+                return structured.get("result", structured)
+
+            project = "Compatibility Project"
+            created = await call(
+                "create_memory_project",
+                {
+                    "project_name": project,
+                    "project_path": str(notes),
+                    "set_default": True,
+                    "output_format": "json",
+                },
+            )
+            assert created["name"] == project
+
+            listed = await call("list_memory_projects", {"output_format": "json"})
+            assert project in json.dumps(listed)
+
+            written = await call(
+                "write_note",
+                {
+                    "title": "Compatibility Note",
+                    "content": "initial compatibility marker",
+                    "directory": "compat",
+                    "project": project,
+                    "output_format": "json",
+                },
+            )
+            identifier = written["title"]
+            permalink = written["permalink"]
+            file_path = written["file_path"]
+
+            read = await call(
+                "read_note",
+                {
+                    "identifier": identifier,
+                    "project": project,
+                    "output_format": "json",
+                },
+            )
+            assert "initial compatibility marker" in read["content"]
+
+            await call(
+                "edit_note",
+                {
+                    "identifier": identifier,
+                    "operation": "append",
+                    "content": "edited compatibility marker",
+                    "project": project,
+                    "output_format": "json",
+                },
+            )
+            for _ in range(20):
+                searched = await call(
+                    "search_notes",
+                    {
+                        "query": "edited compatibility marker",
+                        "project": project,
+                        "output_format": "json",
+                    },
+                )
+                if "edited compatibility marker" in json.dumps(searched):
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("edited note never reached the Basic Memory search index")
+
+            raw = await call(
+                "read_content", {"path": file_path, "project": project}
+            )
+            assert "edited compatibility marker" in json.dumps(raw)
+            assert identifier in await call(
+                "view_note", {"identifier": identifier, "project": project}
+            )
+            await call(
+                "build_context",
+                {"url": f"memory://{permalink}", "project": project},
+            )
+            await call(
+                "recent_activity", {"project": project, "output_format": "json"}
+            )
+            await call("list_directory", {"project": project, "depth": 3})
+            await call(
+                "canvas",
+                {
+                    "nodes": [
+                        {
+                            "id": "compat",
+                            "type": "text",
+                            "x": 0,
+                            "y": 0,
+                            "width": 240,
+                            "height": 120,
+                            "text": "Compatibility",
+                        }
+                    ],
+                    "edges": [],
+                    "title": "Compatibility Canvas",
+                    "directory": "compat",
+                    "project": project,
+                },
+            )
+            await call(
+                "schema_infer",
+                {"note_type": "note", "project": project, "output_format": "json"},
+            )
+            await call(
+                "schema_diff",
+                {"note_type": "note", "project": project, "output_format": "json"},
+            )
+            await call(
+                "schema_validate",
+                {"identifier": identifier, "project": project, "output_format": "json"},
+            )
+            await call("search", {"query": "edited compatibility marker"})
+            await call("fetch", {"id": permalink})
+            await call(
+                "move_note",
+                {
+                    "identifier": identifier,
+                    "destination_folder": "moved",
+                    "project": project,
+                    "output_format": "json",
+                },
+            )
+            await call(
+                "delete_note",
+                {
+                    "identifier": identifier,
+                    "project": project,
+                    "output_format": "json",
+                },
+            )
+            await call("release_notes")
+            detached = await call("delete_project", {"project_name": project})
+            assert detached["status"] == "detached"
+
+            after_delete = await call(
+                "list_memory_projects", {"output_format": "json"}
+            )
+            assert project not in json.dumps(after_delete)
+
+    assert called == {
+        "build_context",
+        "canvas",
+        "create_memory_project",
+        "delete_note",
+        "delete_project",
+        "edit_note",
+        "fetch",
+        "list_directory",
+        "list_memory_projects",
+        "move_note",
+        "read_content",
+        "read_note",
+        "recent_activity",
+        "release_notes",
+        "schema_diff",
+        "schema_infer",
+        "schema_validate",
+        "search",
+        "search_notes",
+        "view_note",
+        "write_note",
+    }
+
+
+@pytest.mark.asyncio
+async def test_unified_delete_detaches_the_only_basic_memory_project(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    notes = tmp_path / "only-project"
+    notes.mkdir()
+    config = _config(tmp_path, space="bootstrap")
+    config.workspace_root = notes
+    seed = MemoryService(config)
+    try:
+        resolved = seed.projects.resolve_workspace(notes)
+        project_id = resolved["project_id"]
+        seed.storage.conn.execute(
+            "UPDATE projects SET state='detached' WHERE project_id='bootstrap'"
+        )
+        seed.storage.conn.commit()
+    finally:
+        seed.close()
+
+    env = dict(os.environ)
+    env.update(
+        EVERMIND_HOME=str(config.home),
+        EVERMIND_DEFAULT_SPACE=project_id,
+        EVERMIND_WORKSPACE_ROOT=str(notes),
+        EVERMIND_ARCHIVE_ROOT=str(config.archive_root),
+        BASIC_MEMORY_CONFIG_DIR=str(tmp_path / "basic-memory"),
+    )
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from evermind_mcp.server_v2 import main_sync; main_sync()"],
+        env=env,
+    )
+
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            before = await session.call_tool(
+                "list_memory_projects", {"output_format": "json"}
+            )
+            assert len(before.structuredContent["result"]["projects"]) == 1
+
+            deleted = await session.call_tool("delete_project", {"project": project_id})
+            assert deleted.isError is False, deleted.content[0].text
+
+            after = await session.call_tool(
+                "list_memory_projects", {"output_format": "json"}
+            )
+            assert after.structuredContent["result"]["projects"] == []
+
+            recreated = await session.call_tool(
+                "create_memory_project",
+                {
+                    "project_name": "Recreated Project",
+                    "project_path": str(tmp_path / "recreated"),
+                    "set_default": True,
+                    "output_format": "json",
+                },
+            )
+            assert recreated.isError is False, recreated.content[0].text
+
+    assert notes.is_dir()
+
+
+@pytest.mark.asyncio
 async def test_local_basic_memory_ignores_cloud_credentials_without_network(
     tmp_path: Path,
 ) -> None:

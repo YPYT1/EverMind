@@ -83,7 +83,7 @@ class ProjectService:
         """
         return self.config_manager.default_project
 
-    async def get_default_project_name(self) -> str:
+    async def get_default_project_name(self) -> Optional[str]:
         """Get the default project name, falling back to the database.
 
         ConfigManager reads from the local config file, which doesn't exist
@@ -96,7 +96,7 @@ class ProjectService:
         db_default = await self.repository.get_default_project()
         if db_default is not None:
             return db_default.name
-        raise ValueError("No default project configured")
+        return None
 
     @property
     def current_project(self) -> Optional[str]:

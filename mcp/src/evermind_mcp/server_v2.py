@@ -864,6 +864,7 @@ async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent
             result = await _svc.delete_project(
                 project=args.get("project"),
                 project_name=args.get("project_name"),
+                remove_basic_project=_remove_basic_project,
             )
 
         elif name in CODEBASE_TOOL_NAMES:
@@ -1007,6 +1008,56 @@ async def _record_created_basic_project(arguments: dict, result) -> None:
     )
     if arguments.get("set_default"):
         _svc.set_space(resolved["project_id"])
+
+
+async def _remove_basic_project(binding: dict) -> None:
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
+
+    async with get_client() as client:
+        projects = ProjectClient(client)
+        project_list = await projects.list_projects()
+        external_id = binding.get("basic_external_id")
+        name = binding.get("basic_name")
+        path = binding.get("basic_path")
+        target = next(
+            (
+                item
+                for item in project_list.projects
+                if (external_id and item.external_id == external_id)
+                or (name and item.name == name)
+                or (path and Path(item.path).resolve() == Path(path).resolve())
+            ),
+            None,
+        )
+        if target is None:
+            return
+        if target.is_default:
+            replacement = next(
+                (
+                    item
+                    for item in project_list.projects
+                    if item.external_id != target.external_id
+                ),
+                None,
+            )
+            if replacement is None:
+                from basic_memory import db as basic_db
+                from basic_memory.config import ConfigManager
+                from basic_memory.repository.project_repository import ProjectRepository
+
+                manager = ConfigManager()
+                config = manager.config
+                config.projects.pop(target.name, None)
+                config.default_project = None
+                manager.save_config(config)
+                _, session_maker = await basic_db.get_or_create_db(
+                    config.app_database_path, config=config
+                )
+                await ProjectRepository(session_maker).delete(target.id)
+                return
+            await projects.set_default(replacement.external_id)
+        await projects.delete_project(target.external_id, delete_notes=False)
 
 
 def _local_basic_tool(fn):
