@@ -5,6 +5,11 @@ on:
     branches: [main, experiment/local-source-fusion]
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_runtime:
+        description: Build and upload complete runtime bundles
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -67,3 +72,58 @@ jobs:
           uv run --frozen --directory mcp pytest
           ../tests/test_integrated_stack.py
           -q -k "platform_ci or require_python_312 or powershell_syntax"
+
+      - name: Install Windows C toolchain
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        uses: msys2/setup-msys2@v2.32.0
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+
+      - name: Export Windows C toolchain paths
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: msys2 {0}
+        run: |
+          echo "$(cygpath -w /ucrt64/bin)" >> "$GITHUB_PATH"
+          echo "$(cygpath -w /usr/bin)" >> "$GITHUB_PATH"
+
+      - name: Build Windows runtime bundle
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: pwsh
+        run: >-
+          ./scripts/release-runtime.ps1
+          -ProjectRoot $PWD
+          -OutputDirectory (Join-Path $PWD 'dist/runtime')
+          -Target '${{ matrix.platform }}'
+
+      - name: Build Unix runtime bundle
+        if: runner.os != 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: bash
+        run: >-
+          bash scripts/release-runtime.sh
+          --project-root "$GITHUB_WORKSPACE"
+          --output-directory "$GITHUB_WORKSPACE/dist/runtime"
+          --target '${{ matrix.platform }}'
+
+      - name: Verify runtime ZIP
+        if: github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        run: >-
+          uv run --frozen --directory mcp python -c
+          "import glob, zipfile;
+          paths = glob.glob('../dist/runtime/*.zip');
+          assert len(paths) == 1, paths;
+          bad = zipfile.ZipFile(paths[0]).testzip();
+          assert bad is None, bad;
+          print(paths[0])"
+
+      - name: Upload runtime bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: EverMind-${{ matrix.platform }}
+          path: dist/runtime/*
+          compression-level: 0
+          retention-days: 7

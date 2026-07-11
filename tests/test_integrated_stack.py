@@ -168,6 +168,11 @@ def test_platform_ci_covers_supported_os_and_architectures() -> None:
         "uv sync --frozen",
         "test_release_consistency.py",
         "test_package_source_bundle.py",
+        "build_runtime:",
+        "msys2/setup-msys2@v2.32.0",
+        "scripts/release-runtime",
+        "actions/upload-artifact@v7.0.1",
+        "compression-level: 0",
     ]:
         assert marker in workflow
 
