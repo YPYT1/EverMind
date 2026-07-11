@@ -5,11 +5,11 @@
 **Local-first 6-layer AI memory system for coding agents.**  
 Zero config. Zero cloud. Runs inside Claude Code, Cursor, and Codex.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat-square)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
 [![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
 [![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?style=flat-square)](#architecture)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](scripts/setup-windows.ps1)
 [![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](scripts/setup-macos.sh)
 
@@ -54,7 +54,7 @@ EverMind solves this by giving agents a reliable place to store and retrieve tha
                        |
            +-----------v-----------+
            |   SQLite              |
-           |   (one file/project)  |
+           |   (shared catalog)    |
            |                       |
            |  Layer 1: working     |  24h auto-expire
            |  Layer 2: episodic    |  events & discoveries
@@ -69,7 +69,8 @@ EverMind solves this by giving agents a reliable place to store and retrieve tha
            +-----------------------+
 ```
 
-Storage: `~/.evermind/<project-slug>.db` — one SQLite file per project, name auto-detected from git remote.
+Storage: `~/.evermind/catalog.db` — one shared local catalog. Project and
+workspace IDs record provenance and affect ranking; they do not hide memories.
 
 ## How EverMind Works
 
@@ -127,11 +128,17 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 bash scripts/setup-macos.sh
 ```
 
-The script checks Python 3.11+, installs uv if missing, syncs dependencies, and auto-configures Claude Desktop and Cursor.
+The script checks Python 3.12+, installs uv if missing, syncs dependencies, and auto-configures Claude Desktop and Cursor.
 
 ### Codebase and archive engines
 
-EverMind exposes 42 tools through the same `evermind` MCP server. Code exploration uses the built-in local code graph engine. On this branch, the MIT `codebase-memory-mcp` C/tree-sitter/Hybrid-LSP source is vendored under `third_party/codebase-memory-mcp` and is used as the high-precision in-repo backend when built; the Python native graph remains the local fallback. Archive notes use the built-in local archive engine backed by Markdown files. No external Basic Memory CLI, cloud account, or PATH-installed codebase-memory binary is required; clients register only EverMind.
+EverMind exposes 50 tools through the same `evermind` MCP server: 14 memory
+tools, 13 code graph tools, 20 local Basic Memory tools, 2 reviewed archive
+update tools, and 1 unified project lifecycle tool. Basic Memory executes from
+the vendored source in process. Code exploration uses the vendored MIT
+`codebase-memory-mcp` C/tree-sitter/Hybrid-LSP engine; official bundles require
+its verified internal binary. No external Basic Memory CLI, cloud account, or
+PATH-installed codebase-memory binary is required.
 
 For new projects, run `index_repository`, then `get_architecture`/`search_code`, then save verified findings:
 
@@ -162,14 +169,12 @@ Add to your `claude_desktop_config.json`:
 
 Replace `/path/to/EverMind` with the actual clone path. That is the only required change.
 
-### 4. Enable vector search (optional but recommended)
+### 4. Semantic search
 
-```bash
-cd mcp
-uv pip install sqlite-vec sentence-transformers
-```
-
-Without these, EverMind uses FTS5 keyword search. With them, `recall()` runs hybrid BM25 + vector KNN — significantly better for semantic queries like "what did we decide about the auth module".
+Offline English and Chinese semantic retrieval is included by default using the
+bundled `intfloat/multilingual-e5-small` model. When an external embedding or
+rerank API is configured and healthy, EverMind prefers it and falls back to the
+local profile on failure. No API key is required for the local baseline.
 
 ## MCP Tools
 
@@ -194,7 +199,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
 What the script does:
-- Checks Python 3.11+, uv, git
+- Checks Python 3.12+, uv, git
 - Offers to install uv if not found
 - Runs `uv sync` in the mcp directory
 - Auto-updates Claude Desktop and Cursor MCP configs
@@ -214,8 +219,8 @@ Same steps as Windows, using macOS config paths (`~/Library/Application Support/
 # Install dependencies
 uv sync --directory mcp
 
-# Optional: vector search (recommended)
-cd mcp && uv pip install sqlite-vec sentence-transformers
+# Include sqlite-vec and Chinese tokenization acceleration
+uv sync --directory mcp --extra full
 ```
 
 ## Memory Lifecycle
