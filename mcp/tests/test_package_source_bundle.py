@@ -110,3 +110,38 @@ def test_source_packager_rejects_modified_tracked_files(
 
     assert not output.exists()
     assert not Path(f"{output}.sha256").exists()
+
+
+def test_source_packager_rejects_unmaterialized_lfs_pointer(
+    tmp_path: Path,
+) -> None:
+    module = _source_package_module()
+    repo = _repo(tmp_path)
+    (repo / ".gitattributes").write_text(
+        "model.bin filter=lfs diff=lfs merge=lfs -text\n",
+        encoding="ascii",
+    )
+    (repo / "model.bin").write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'a' * 64}\n"
+        "size 470641600\n",
+        encoding="ascii",
+    )
+    _git(repo, "add", ".gitattributes", "model.bin")
+    _git(
+        repo,
+        "-c",
+        "user.name=EverMind Tests",
+        "-c",
+        "user.email=tests@evermind.local",
+        "commit",
+        "-m",
+        "add lfs model",
+    )
+    output = tmp_path / "source.zip"
+
+    with pytest.raises(module.SourceBundleError, match="not materialized: model.bin"):
+        module.package_source_bundle(repo, output)
+
+    assert not output.exists()
+    assert not Path(f"{output}.sha256").exists()

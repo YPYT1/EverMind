@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -45,6 +46,7 @@ def package_source_bundle(
 
     commit = _git(repo, "rev-parse", "HEAD").decode("ascii").strip()
     files = _tracked_files(repo)
+    _reject_lfs_pointers(repo, files)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     archive_temp = _temporary_path(output_path.parent, output_path.name)
     sidecar_temp = _temporary_path(output_path.parent, sidecar_path.name)
@@ -132,6 +134,31 @@ def _tracked_files(repo: Path) -> list[tuple[str, str, str]]:
             )
         files.append((os.fsdecode(raw_path), mode, object_id))
     return sorted(files, key=lambda item: item[0])
+
+
+_LFS_POINTER = re.compile(
+    rb"\Aversion https://git-lfs.github.com/spec/v1\r?\n"
+    rb"(?:ext-[^\r\n]+\r?\n)*"
+    rb"oid sha256:[0-9a-f]{64}\r?\n"
+    rb"size [0-9]+\r?\n?\Z"
+)
+
+
+def _reject_lfs_pointers(
+    repo: Path,
+    files: list[tuple[str, str, str]],
+) -> None:
+    for relative, mode, _object_id in files:
+        if mode not in {"100644", "100755"}:
+            continue
+        path = repo / Path(relative)
+        try:
+            with path.open("rb") as handle:
+                candidate = handle.read(1025)
+        except OSError as exc:
+            raise SourceBundleError(f"cannot read tracked source: {relative}") from exc
+        if _LFS_POINTER.fullmatch(candidate):
+            raise SourceBundleError(f"Git LFS content is not materialized: {relative}")
 
 
 def _git(repo: Path, *args: str) -> bytes:
