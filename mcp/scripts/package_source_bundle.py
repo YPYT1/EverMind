@@ -66,12 +66,16 @@ def package_source_bundle(
                 )
                 info.create_system = 3
                 info.compress_type = zipfile.ZIP_STORED
+                blob = _git(repo, "cat-file", "blob", object_id)
                 if mode == "120000":
                     info.external_attr = (stat.S_IFLNK | 0o777) << 16
-                    archive.writestr(info, _git(repo, "cat-file", "blob", object_id))
+                    archive.writestr(info, blob)
                     continue
                 permissions = 0o755 if mode == "100755" else 0o644
                 info.external_attr = (stat.S_IFREG | permissions) << 16
+                if not _LFS_POINTER.fullmatch(blob):
+                    archive.writestr(info, blob)
+                    continue
                 path = repo / Path(relative)
                 try:
                     with (

@@ -93,6 +93,40 @@ def test_source_zip_is_byte_deterministic_and_contains_tracked_sources(
         assert all(info.compress_type == zipfile.ZIP_STORED for info in infos)
 
 
+def test_source_zip_uses_committed_bytes_not_platform_line_endings(
+    tmp_path: Path,
+) -> None:
+    module = _source_package_module()
+    repo = _repo(tmp_path)
+    tracked = repo / "line-endings.txt"
+    (repo / ".gitattributes").write_text(
+        "line-endings.txt text eol=crlf\n",
+        encoding="ascii",
+    )
+    tracked.write_bytes(b"first\nsecond\n")
+    _git(repo, "add", ".gitattributes", "line-endings.txt")
+    _git(
+        repo,
+        "-c",
+        "user.name=EverMind Tests",
+        "-c",
+        "user.email=tests@evermind.local",
+        "commit",
+        "-m",
+        "add text file",
+    )
+    tracked.unlink()
+    _git(repo, "checkout", "--", "line-endings.txt")
+    assert tracked.read_bytes() == b"first\r\nsecond\r\n"
+    assert _git(repo, "status", "--porcelain=v1", "--untracked-files=no") == ""
+    output = tmp_path / "source.zip"
+
+    module.package_source_bundle(repo, output, root_name="EverMind-source")
+
+    with zipfile.ZipFile(output) as archive:
+        assert archive.read("EverMind-source/line-endings.txt") == b"first\nsecond\n"
+
+
 @pytest.mark.parametrize("staged", [False, True])
 def test_source_packager_rejects_modified_tracked_files(
     tmp_path: Path,
