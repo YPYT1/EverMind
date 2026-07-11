@@ -124,9 +124,10 @@ def _remember_in_process(home: str, index: int, start, results) -> None:
 
 
 def test_package_metadata_matches_local_source_fusion_contract() -> None:
-    project = tomllib.loads(
+    document = tomllib.loads(
         (ROOT / "mcp" / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]
+    )
+    project = document["project"]
 
     assert project["requires-python"] == ">=3.12"
     assert project["license"] == "AGPL-3.0-or-later"
@@ -136,6 +137,10 @@ def test_package_metadata_matches_local_source_fusion_contract() -> None:
     )
     assert "mcp==1.26.0" in project["dependencies"]
     assert "fastmcp==3.3.1" in project["dependencies"]
+    assert (
+        "sys_platform == 'darwin' and platform_machine == 'x86_64'"
+        in document["tool"]["uv"]["required-environments"]
+    )
 
 
 def test_vendored_source_manifest_pins_exact_upstream_commits() -> None:

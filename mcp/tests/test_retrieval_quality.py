@@ -36,7 +36,9 @@ def _artifact_stats(root: Path) -> tuple[int, int, str]:
 
 def test_model_manifest_pins_artifact_license_dimensions_and_corpus() -> None:
     manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
-    corpus_hash = hashlib.sha256(DATASET.read_bytes()).hexdigest()
+    corpus_hash = hashlib.sha256(
+        DATASET.read_bytes().replace(b"\r\n", b"\n")
+    ).hexdigest()
     artifact = ROOT / manifest["artifact"]["path"]
 
     assert manifest["model_id"] == "intfloat/multilingual-e5-small"

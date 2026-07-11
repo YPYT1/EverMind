@@ -32,21 +32,18 @@ jobs:
           - platform: windows-x86_64
             runner: windows-2025
             python_arch: x64
-          - platform: windows-aarch64
-            runner: windows-11-arm
-            python_arch: arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
 

@@ -152,11 +152,15 @@ def test_platform_ci_covers_supported_os_and_architectures() -> None:
         "macos-15-intel",
         "macos-15",
         "windows-2025",
-        "windows-11-arm",
     ]:
         assert runner in workflow
+    assert "windows-11-arm" not in workflow
+    assert workflow.count("platform:") == 5
     for marker in [
         "lfs: true",
+        "actions/checkout@v7",
+        "actions/setup-python@v6",
+        "astral-sh/setup-uv@v8",
         'python-version: "3.12"',
         "architecture: ${{ matrix.python_arch }}",
         "python_arch: arm64",

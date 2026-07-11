@@ -23,6 +23,11 @@ dependencies = [
     "sentence-transformers==5.6.0",
 ]
 
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
 [tool.uv.sources]
 basic-memory = { path = "../third_party/basic-memory", editable = true }
 
