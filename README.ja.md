@@ -5,11 +5,11 @@
 **AIコーディングエージェントのためのローカルファースト6層メモリシステム。**  
 ゼロ設定。ゼロクラウド依存。Claude Code、Cursor、Codexで動作。
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat-square)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-enabled-8E44AD?style=flat-square)](https://modelcontextprotocol.io/)
 [![Local First](https://img.shields.io/badge/local--first-yes-2ECC71?style=flat-square)](docs/architecture.md)
 [![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?style=flat-square)](#アーキテクチャ)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?style=flat-square)](scripts/setup-windows.ps1)
 [![macOS](https://img.shields.io/badge/macOS-supported-000000?style=flat-square)](scripts/setup-macos.sh)
 
@@ -53,8 +53,7 @@ EverMindは、エージェントがその知識を保存・取得できる信頼
                        |
            +-----------v-----------+
            |   SQLite              |
-           | (プロジェクトごとに   |
-           |  1ファイル)           |
+           |  (共有カタログ)       |
            |                       |
            |  レイヤー1: 作業      |  24時間自動期限切れ
            |  レイヤー2: エピソード|  イベントと発見
@@ -69,7 +68,7 @@ EverMindは、エージェントがその知識を保存・取得できる信頼
            +-----------------------+
 ```
 
-ストレージ：`~/.evermind/<project-slug>.db` — プロジェクトごとに1つのSQLiteファイル、名前はgit remoteから自動検出。
+ストレージ：`~/.evermind/catalog.db`。プロジェクトとワークスペース ID は出所とランキングに使われ、メモリの読み取りを制限しません。
 
 ## クイックスタート
 
@@ -94,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 bash scripts/setup-macos.sh
 ```
 
-スクリプトはPython 3.11+をチェックし、uvがない場合はインストールし、依存関係を同期し、Claude DesktopとCursorを自動設定します。
+スクリプトはPython 3.12+をチェックし、uvがない場合はインストールし、依存関係を同期し、Claude DesktopとCursorを自動設定します。
 
 ### 3. 手動設定（オプション）
 
@@ -113,23 +112,18 @@ bash scripts/setup-macos.sh
 
 `/path/to/EverMind`を実際のクローンパスに置き換えてください。これが唯一必要な変更です。
 
-### 4. ベクトル検索を有効化（オプション、推奨）
+### 4. セマンティック検索
 
-```bash
-cd mcp
-uv pip install sqlite-vec sentence-transformers
-```
-
-これらがなくても、EverMindはFTS5キーワード検索を使用します。インストールすると、`recall()`はハイブリッドBM25 + ベクトルKNNを実行し、「認証モジュールについて何を決定したか」のような意味的クエリに大幅に優れています。
+内蔵の `intfloat/multilingual-e5-small` モデルにより、英語と中国語のセマンティック検索をオフラインで利用できます。外部 embedding または rerank API を設定した場合は正常時に外部機能を優先し、障害時はローカルモデルへ自動的にフォールバックします。
 
 ## MCPツール
 
-EverMind は同じ `evermind` MCP サーバーから 42 個のツールを公開します：14 個のメモリツール、14 個の内蔵コードグラフツール、14 個の内蔵アーカイブツール。外部 Basic Memory CLI や codebase-memory バイナリは不要です。
+EverMind は同じ `evermind` MCP サーバーから 50 個のツールを公開します：14 個のメモリツール、13 個のコードグラフツール、20 個のローカル Basic Memory ツール、2 個のレビュー済みアーカイブ更新ツール、1 個の統合プロジェクトライフサイクルツールです。外部 Basic Memory CLI や codebase-memory バイナリは不要です。
 
 | ツール | 目的 |
 |--------|------|
 | `remember(content, importance, tags)` | メモリに保存。importance: 0 = 作業(24h), 1 = 長期, 2 = 永久 |
-| `update_memory(id, content, tags, meta)` | 誤ったメモリを同じ ID のまま修正し、検索・embedding・グラフ・briefing キャッシュを再構築 |
+| `update_memory(id, content, tags, meta)` | 修正版を作成して旧版を置換済みにし、派生インデックスを更新 |
 | `recall(query, limit, mode)` | ハイブリッドBM25 + 意味検索。gitからプロジェクトを自動検出 |
 | `forget(id)` | IDでメモリを削除 |
 | `briefing()` | セッションコンテキストをロード：このプロジェクトの最近の重要なメモリ |
@@ -145,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
 スクリプトの機能：
-- Python 3.11+、uv、gitをチェック
+- Python 3.12+、uv、gitをチェック
 - uvが見つからない場合はインストールを提供
 - mcpディレクトリで`uv sync`を実行
 - Claude DesktopとCursorのMCP設定を自動更新
@@ -165,8 +159,8 @@ Windowsと同じ手順、macOS設定パス（`~/Library/Application Support/Clau
 # 依存関係をインストール
 uv sync --directory mcp
 
-# オプション：ベクトル検索（推奨）
-cd mcp && uv pip install sqlite-vec sentence-transformers
+# sqlite-vec と中国語トークン化の高速化を追加
+uv sync --directory mcp --extra full
 ```
 
 ## メモリライフサイクル
