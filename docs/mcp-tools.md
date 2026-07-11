@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-EverMind v2 exposes one unified MCP server with 42 tools: 14 memory tools, 14 built-in code graph tools, and 14 built-in archive tools. Agents only need the `evermind` MCP entry.
+EverMind v2 exposes one unified MCP server with 50 tools: 14 memory tools, 13 code graph tools, 20 local Basic Memory tools, 2 reviewed archive update tools, and 1 unified project lifecycle tool. Agents only need the `evermind` MCP entry.
 
 ## briefing
 
@@ -225,19 +225,25 @@ The update path rebuilds FTS, refreshes embeddings, replaces graph links when co
 
 ## EverMind Code Graph Tools
 
-These tools are exposed by EverMind and run through its built-in local code graph index:
+These tools are exposed by EverMind and run through its local code graph index:
 
-`index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`.
+`index_repository`, `list_projects`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`.
 
 Use them before writing project facts into memory. Stable code facts should be saved with `tags=["codebase-verified"]`.
 
 ---
 
-## EverMind Archive Tools
+## Local Basic Memory Tools
 
-These tools are exposed by EverMind and run through the built-in local Markdown archive:
+These upstream local tools execute in process from the vendored Basic Memory source:
 
-`write_note`, `read_note`, `delete_note`, `edit_note`, `build_context`, `recent_activity`, `search_notes`, `list_memory_projects`, `list_workspaces`, `schema_validate`, `schema_infer`, `schema_diff`, `propose_basic_memory_update`, `commit_basic_memory_update`.
+`build_context`, `canvas`, `create_memory_project`, `delete_note`, `edit_note`, `fetch`, `list_directory`, `list_memory_projects`, `move_note`, `read_content`, `read_note`, `recent_activity`, `release_notes`, `schema_diff`, `schema_infer`, `schema_validate`, `search`, `search_notes`, `view_note`, `write_note`.
+
+## Unified Project Lifecycle
+
+`delete_project` detaches the unified project and its derived Basic Memory and code graph indexes without deleting repositories, Markdown notes, or durable memories.
+
+## Reviewed Archive Update Tools
 
 `propose_basic_memory_update` writes an EverMind archive candidate only. `commit_basic_memory_update` requires `confirmed=true`.
 
