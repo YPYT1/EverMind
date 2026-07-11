@@ -142,6 +142,32 @@ def test_required_top_level_layout_exists() -> None:
     assert missing == []
 
 
+def test_platform_ci_covers_supported_os_and_architectures() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "platform-matrix.yml").read_text(
+        encoding="utf-8"
+    )
+    for runner in [
+        "ubuntu-24.04",
+        "ubuntu-24.04-arm",
+        "macos-15-intel",
+        "macos-15",
+        "windows-2025",
+        "windows-11-arm",
+    ]:
+        assert runner in workflow
+    for marker in [
+        "lfs: true",
+        'python-version: "3.12"',
+        "architecture: ${{ matrix.python_arch }}",
+        "python_arch: arm64",
+        "python_arch: x64",
+        "uv sync --frozen",
+        "test_release_consistency.py",
+        "test_package_source_bundle.py",
+    ]:
+        assert marker in workflow
+
+
 def test_required_mcp_bundle_assets_exist() -> None:
     mcp_root = ROOT / "mcp"
     expected = [

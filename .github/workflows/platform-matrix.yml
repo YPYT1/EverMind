@@ -1,0 +1,72 @@
+name: Platform matrix
+
+on:
+  push:
+    branches: [main, experiment/local-source-fusion]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            python_arch: x64
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            python_arch: arm64
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            python_arch: x64
+          - platform: macos-aarch64
+            runner: macos-15
+            python_arch: arm64
+          - platform: windows-x86_64
+            runner: windows-2025
+            python_arch: x64
+          - platform: windows-aarch64
+            runner: windows-11-arm
+            python_arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install locked local runtime
+        run: uv sync --frozen --directory mcp --group dev --extra full
+
+      - name: Lint
+        run: uv run --frozen --directory mcp ruff check
+
+      - name: Verify release and source bundle contracts
+        run: >-
+          uv run --frozen --directory mcp pytest
+          tests/test_release_consistency.py
+          tests/test_package_source_bundle.py
+          tests/test_release_source_bundle.py
+          tests/test_retrieval_quality.py::test_model_manifest_pins_artifact_license_dimensions_and_corpus
+          -q
+
+      - name: Verify platform setup contracts
+        run: >-
+          uv run --frozen --directory mcp pytest
+          ../tests/test_integrated_stack.py
+          -q -k "platform_ci or require_python_312 or powershell_syntax"
