@@ -189,6 +189,30 @@ def test_required_user_setup_scripts_exist() -> None:
     assert missing == []
 
 
+def test_runtime_release_wrappers_build_engine_and_call_shared_orchestrator() -> None:
+    windows = (ROOT / "scripts" / "release-runtime.ps1").read_text(encoding="utf-8")
+    unix = (ROOT / "scripts" / "release-runtime.sh").read_text(encoding="utf-8")
+
+    for marker in [
+        "build-vendored-codebase.ps1",
+        "scripts.release_runtime_bundle",
+        "dist\\runtime",
+        "--codebase-binary",
+        "--output-directory",
+    ]:
+        assert marker in windows
+    for marker in [
+        "build-vendored-codebase.sh",
+        "scripts.release_runtime_bundle",
+        "dist/runtime",
+        "--codebase-binary",
+        "--output-directory",
+    ]:
+        assert marker in unix
+    assert "--target" in windows
+    assert "--target" in unix
+
+
 def test_quick_start_scripts_use_builtin_engines_by_default() -> None:
     windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
     macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")
