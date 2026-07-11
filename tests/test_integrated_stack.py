@@ -213,6 +213,54 @@ def test_runtime_release_wrappers_build_engine_and_call_shared_orchestrator() ->
     assert "--target" in unix
 
 
+def test_unix_runtime_release_project_root_controls_default_output(
+    tmp_path: Path,
+) -> None:
+    bash = shutil.which("bash")
+    if platform.system() == "Windows":
+        git_exec = run(["git", "--exec-path"]).stdout.strip()
+        candidate = Path(git_exec).resolve().parents[2] / "usr" / "bin" / "bash.exe"
+        bash = str(candidate) if candidate.is_file() else None
+    if not bash:
+        return
+
+    project_root = tmp_path / "project"
+    binary = tmp_path / "codebase-memory-mcp"
+    fake_bin = tmp_path / "bin"
+    captured = tmp_path / "uv-args.txt"
+    project_root.mkdir()
+    fake_bin.mkdir()
+    binary.write_bytes(b"binary")
+    uv = fake_bin / "uv"
+    uv.write_text(
+        "#!/usr/bin/env sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["CAPTURED_ARGS"] = str(captured)
+    subprocess.run(
+        [
+            bash,
+            str(ROOT / "scripts" / "release-runtime.sh"),
+            "--project-root",
+            str(project_root),
+            "--codebase-binary",
+            str(binary),
+            "--target",
+            "linux-x86_64",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=True,
+    )
+
+    args = captured.read_text(encoding="utf-8").splitlines()
+    output_index = args.index("--output-directory") + 1
+    assert Path(args[output_index]) == project_root / "dist" / "runtime"
+
+
 def test_quick_start_scripts_use_builtin_engines_by_default() -> None:
     windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
     macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")

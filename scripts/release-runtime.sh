@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CODEBASE_BINARY="${CODEBASE_BINARY:-}"
-OUTPUT_DIRECTORY="${OUTPUT_DIRECTORY:-$PROJECT_ROOT/dist/runtime}"
+OUTPUT_DIRECTORY="${OUTPUT_DIRECTORY:-}"
 TARGET="${TARGET:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -15,6 +15,8 @@ while [[ $# -gt 0 ]]; do
     *) printf '[ERROR] unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+OUTPUT_DIRECTORY="${OUTPUT_DIRECTORY:-$PROJECT_ROOT/dist/runtime}"
 
 if [[ -z "$CODEBASE_BINARY" ]]; then
   bash "$PROJECT_ROOT/scripts/build-vendored-codebase.sh"
