@@ -30,6 +30,8 @@ def package_source_bundle(
         raise SourceBundleError(f"repository root does not exist: {repo}")
     if output_path.exists() or sidecar_path.exists():
         raise SourceBundleError(f"output already exists: {output_path}")
+    if _git(repo, "status", "--porcelain=v1", "--untracked-files=no"):
+        raise SourceBundleError("repository tracked files have uncommitted changes")
 
     archive_root = root_name or f"{repo.name}-source"
     if (

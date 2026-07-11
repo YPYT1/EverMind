@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import zipfile
 
+import pytest
+
 
 def _source_package_module():
     spec = importlib.util.find_spec("scripts.package_source_bundle")
@@ -89,3 +91,22 @@ def test_source_zip_is_byte_deterministic_and_contains_tracked_sources(
         assert f"{root_name}/untracked.txt" not in archive.namelist()
         assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in infos)
         assert all(info.compress_type == zipfile.ZIP_STORED for info in infos)
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_source_packager_rejects_modified_tracked_files(
+    tmp_path: Path,
+    staged: bool,
+) -> None:
+    module = _source_package_module()
+    repo = _repo(tmp_path)
+    (repo / "LICENSE").write_text("changed\n", encoding="utf-8")
+    if staged:
+        _git(repo, "add", "LICENSE")
+    output = tmp_path / "source.zip"
+
+    with pytest.raises(module.SourceBundleError, match="uncommitted changes"):
+        module.package_source_bundle(repo, output)
+
+    assert not output.exists()
+    assert not Path(f"{output}.sha256").exists()
