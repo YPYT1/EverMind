@@ -57,16 +57,16 @@ try {
 }
 
 if ($null -eq $PythonCmd) {
-    Write-FAIL "Python not found. Install Python 3.11+ from https://python.org and re-run."
+    Write-FAIL "Python not found. Install Python 3.12+ from https://python.org and re-run."
 } else {
-    # Parse version string like "Python 3.11.4"
+    # Parse version string like "Python 3.12.4"
     if ($pythonVersion -match "Python (\d+)\.(\d+)") {
         $major = [int]$Matches[1]
         $minor = [int]$Matches[2]
-        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+        if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 12)) {
             Write-OK "Python $major.$minor found ($PythonCmd)"
         } else {
-            Write-FAIL "Python $major.$minor is too old. EverMind requires Python 3.11+."
+            Write-FAIL "Python $major.$minor is too old. EverMind requires Python 3.12+."
         }
     } else {
         Write-FAIL "Could not parse Python version from: $pythonVersion"
@@ -258,7 +258,7 @@ Write-Header "Setup Complete"
 
 Write-Host ""
 Write-Host "  What was checked and configured:" -ForegroundColor White
-Write-Host "    - Python ($PythonCmd): version verified >= 3.11" -ForegroundColor White
+Write-Host "    - Python ($PythonCmd): version verified >= 3.12" -ForegroundColor White
 Write-Host "    - uv: package manager verified / installed" -ForegroundColor White
 Write-Host "    - git: presence checked (optional)" -ForegroundColor White
 Write-Host "    - sentence-transformers: availability checked" -ForegroundColor White

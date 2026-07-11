@@ -24,14 +24,14 @@ PYTHON_CMD=""
 for candidate in python3 python; do
   if command -v "$candidate" &>/dev/null; then
     ver=$("$candidate" -c "import sys; v=sys.version_info; print(v.major*100+v.minor)" 2>/dev/null || echo 0)
-    if [ "$ver" -ge 311 ]; then
+    if [ "$ver" -ge 312 ]; then
       PYTHON_CMD="$candidate"
       ok "Python $($candidate --version)"
       break
     fi
   fi
 done
-[ -n "$PYTHON_CMD" ] || fail "Python 3.11+ required. Install from https://www.python.org or via Homebrew: brew install python@3.12"
+[ -n "$PYTHON_CMD" ] || fail "Python 3.12+ required. Install from https://www.python.org or via Homebrew: brew install python@3.12"
 
 # b) uv check
 if ! command -v uv &>/dev/null; then

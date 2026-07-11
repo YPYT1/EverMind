@@ -271,6 +271,18 @@ def test_quick_start_scripts_use_builtin_engines_by_default() -> None:
     assert "Built-in engines configured" in macos
 
 
+def test_quick_start_scripts_require_python_312() -> None:
+    windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
+    macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")
+
+    assert "$minor -ge 12" in windows
+    assert '"$ver" -ge 312' in macos
+    assert "Python 3.12+" in windows
+    assert "Python 3.12+" in macos
+    assert "Python 3.11" not in windows
+    assert "Python 3.11" not in macos
+
+
 def test_install_all_scripts_do_not_install_external_engines_by_default() -> None:
     windows = (ROOT / "scripts" / "windows" / "install-all.ps1").read_text(encoding="utf-8")
     macos = (ROOT / "scripts" / "macos" / "install-all.sh").read_text(encoding="utf-8")
