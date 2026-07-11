@@ -206,7 +206,7 @@ function Update-McpConfig($ConfigPath, $AppName) {
 
         # Add mcpServers if missing
         if ($null -eq $json.mcpServers) {
-            $json | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@)
+            $json | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@{})
         }
 
         # Set evermind entry

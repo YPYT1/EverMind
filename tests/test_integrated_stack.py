@@ -283,6 +283,22 @@ def test_quick_start_scripts_require_python_312() -> None:
     assert "Python 3.11" not in macos
 
 
+def test_windows_setup_script_has_valid_powershell_syntax() -> None:
+    if platform.system() != "Windows":
+        return
+
+    script = ROOT / "scripts" / "setup-windows.ps1"
+    command = (
+        "$tokens=$null; $errors=$null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{script}', "
+        "[ref]$tokens, [ref]$errors); if($errors.Count){exit 1}"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+        check=True,
+    )
+
+
 def test_install_all_scripts_do_not_install_external_engines_by_default() -> None:
     windows = (ROOT / "scripts" / "windows" / "install-all.ps1").read_text(encoding="utf-8")
     macos = (ROOT / "scripts" / "macos" / "install-all.sh").read_text(encoding="utf-8")
