@@ -15,6 +15,7 @@ REQUIRED_COMPONENTS = frozenset(
         "python-runtime",
         "evermind",
         "basic-memory",
+        "basic-memory-source",
         "codebase-engine",
         "embedding-model",
         "license",

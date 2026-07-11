@@ -13,6 +13,7 @@ REQUIRED_COMPONENT_FILES = {
     "python-runtime": "runtime/python.exe",
     "evermind": "app/evermind_mcp/__init__.py",
     "basic-memory": "app/basic_memory/__init__.py",
+    "basic-memory-source": "sources/basic-memory/LICENSE",
     "codebase-engine": "bin/codebase-memory-mcp.exe",
     "embedding-model": "models/multilingual-e5-small/model.safetensors",
     "license": "licenses/AGPL-3.0-or-later.txt",
@@ -181,6 +182,20 @@ def test_official_bundle_requires_every_runtime_component(tmp_path: Path) -> Non
     _write_manifest(package_dir, manifest_path, manifest)
 
     with pytest.raises(module.BundleIntegrityError, match="missing required components"):
+        module.verify_official_bundle(package_dir)
+
+
+def test_official_bundle_requires_basic_memory_source(tmp_path: Path) -> None:
+    module = _bundle_module()
+    package_dir, manifest_path, manifest = _write_bundle(tmp_path)
+    manifest["files"] = [
+        entry
+        for entry in manifest["files"]
+        if entry["component"] != "basic-memory-source"
+    ]
+    _write_manifest(package_dir, manifest_path, manifest)
+
+    with pytest.raises(module.BundleIntegrityError, match="basic-memory-source"):
         module.verify_official_bundle(package_dir)
 
 

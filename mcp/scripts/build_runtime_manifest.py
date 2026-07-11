@@ -98,6 +98,8 @@ def _component_for_path(relative: str) -> str:
         return "evermind"
     if relative.startswith("app/basic_memory/"):
         return "basic-memory"
+    if relative.startswith("sources/basic-memory/"):
+        return "basic-memory-source"
     if relative in {
         "bin/codebase-memory-mcp",
         "bin/codebase-memory-mcp.exe",

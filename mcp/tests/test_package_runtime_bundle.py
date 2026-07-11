@@ -15,6 +15,7 @@ FILES = {
     "runtime/python.exe": b"python\n",
     "app/evermind_mcp/__init__.py": b"evermind\n",
     "app/basic_memory/__init__.py": b"basic\n",
+    "sources/basic-memory/LICENSE": b"basic source\n",
     "bin/codebase-memory-mcp.exe": b"codebase\n",
     "models/multilingual-e5-small/model.safetensors": b"model\n",
     "licenses/AGPL.txt": b"license\n",

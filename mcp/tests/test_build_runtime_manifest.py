@@ -15,6 +15,7 @@ STAGING_FILES = {
     "runtime/python.exe": b"python-runtime\n",
     "app/evermind_mcp/__init__.py": b"evermind\n",
     "app/basic_memory/__init__.py": b"basic-memory\n",
+    "sources/basic-memory/LICENSE": b"basic-memory-source\n",
     "bin/codebase-memory-mcp.exe": b"codebase-engine\n",
     "models/multilingual-e5-small/model.safetensors": b"embedding-model\n",
     "licenses/AGPL-3.0-or-later.txt": b"license\n",
@@ -58,6 +59,11 @@ def test_builder_generates_manifest_that_runtime_verifies(tmp_path: Path) -> Non
     assert next(
         entry for entry in manifest["files"] if entry["path"].startswith("launchers/")
     )["component"] == "support"
+    assert next(
+        entry
+        for entry in manifest["files"]
+        if entry["path"].startswith("sources/basic-memory/")
+    )["component"] == "basic-memory-source"
     assert marker["manifest_sha256"] == hashlib.sha256(
         manifest_path.read_bytes()
     ).hexdigest()
