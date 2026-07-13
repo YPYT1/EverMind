@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from pathlib import Path
+import stat
 import zipfile
 
 import pytest
@@ -59,6 +60,33 @@ def test_runtime_archive_directory_requires_exactly_one_zip(tmp_path: Path) -> N
 
     with pytest.raises(module.RuntimeArchiveError, match="exactly one runtime ZIP"):
         module.find_runtime_archive(tmp_path)
+
+
+def test_runtime_archive_restores_recorded_unix_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _verify_module()
+    archive = tmp_path / "runtime.zip"
+    info = zipfile.ZipInfo("EverMind-runtime/runtime/bin/python3")
+    info.create_system = 3
+    info.external_attr = (stat.S_IFREG | 0o755) << 16
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(info, b"python\n")
+
+    destination = tmp_path / "extracted"
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(destination)
+        calls = []
+        monkeypatch.setattr(
+            Path,
+            "chmod",
+            lambda path, mode: calls.append(
+                (path.relative_to(destination).as_posix(), mode)
+            ),
+        )
+        module._restore_permissions(bundle, destination)
+
+    assert calls == [("EverMind-runtime/runtime/bin/python3", 0o755)]
 
     archive = _archive(tmp_path)
     assert module.find_runtime_archive(tmp_path) == archive.resolve()

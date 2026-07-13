@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import sys
 import tempfile
 import zipfile
@@ -46,6 +47,7 @@ def verify_runtime_archive(
                     f"runtime ZIP must contain one root directory, found {roots}"
                 )
             bundle.extractall(destination)
+            _restore_permissions(bundle, destination)
 
         bundle_root = destination / roots[0]
         state_root = destination / "state"
@@ -69,6 +71,16 @@ def _archive_roots(bundle: zipfile.ZipFile) -> list[str]:
             raise RuntimeArchiveError(f"unsafe runtime ZIP path: {info.filename}")
         roots.add(path.parts[0])
     return sorted(roots)
+
+
+def _restore_permissions(bundle: zipfile.ZipFile, destination: Path) -> None:
+    for info in bundle.infolist():
+        if info.is_dir() or info.create_system != 3:
+            continue
+        mode = stat.S_IMODE(info.external_attr >> 16)
+        if mode:
+            path = destination.joinpath(*PurePosixPath(info.filename).parts)
+            path.chmod(mode)
 
 
 async def _verify_server(
