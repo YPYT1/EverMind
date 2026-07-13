@@ -464,8 +464,9 @@ def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     for phrase in [
         "EverMind MCP",
-        "built-in local code graph",
-        "built-in local Markdown archive",
+        "50 tools over stdio",
+        "source-fused code graph engine",
+        "Local Basic Memory tools execute in process",
         "archive_engine.py",
         "codebase_engine.py",
         "provider_boundary.py",
@@ -473,7 +474,7 @@ def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
         assert phrase in components
     assert "MCP Server" in architecture
     assert "Storage" in architecture
-    assert "42 unified tools" in architecture
+    assert "50 unified tools" in architecture
     assert "EVERMIND_MEMORY_MODE=local" in roadmap
     assert "EVERMIND_SYNC_MODE=off" in roadmap
 
@@ -485,9 +486,9 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
     ja = (ROOT / "README.ja.md").read_text(encoding="utf-8")
     for phrase in [
         "persistent memory across sessions",
-        "42 tools",
-        "built-in local code graph",
-        "built-in local archive",
+        "50 tools",
+        "vendored MIT",
+        "Basic Memory executes from",
         "update_memory",
         "Memory Lifecycle",
         "Built for engineers",
@@ -495,7 +496,7 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
         assert phrase in readme
     for phrase in [
         "跨会话的持久记忆",
-        "42 个工具",
+        "50 个工具",
         "update_memory",
         "记忆生命周期",
         "社群",
@@ -503,14 +504,14 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
         assert phrase in zh
     for phrase in [
         "跨會話的持久記憶",
-        "42 個工具",
+        "50 個工具",
         "update_memory",
         "社群",
     ]:
         assert phrase in zht
     for phrase in [
         "セッションを越えた永続的なメモリ",
-        "42 個のツール",
+        "50 個のツール",
         "update_memory",
         "コミュニティ",
     ]:
