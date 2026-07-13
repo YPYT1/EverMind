@@ -414,7 +414,7 @@ def test_no_standalone_third_party_notice_files() -> None:
     assert not (ROOT / "third_party.lock.yaml").exists()
 
 
-def test_env_example_contains_orchestration_and_cloud_reserved_fields() -> None:
+def test_env_example_contains_local_runtime_fields() -> None:
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
     for key in [
         "EVERMIND_HOME=",
@@ -426,8 +426,20 @@ def test_env_example_contains_orchestration_and_cloud_reserved_fields() -> None:
         "EVERMIND_LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash",
     ]:
         assert key in text
+    assert "EVEROS_" not in text
     assert "EVERMIND_CODEBASE_MEMORY_PATH" not in text
     assert "EVERMIND_BASIC_MEMORY_PATH" not in text
+
+
+def test_public_mcp_docs_and_skill_match_local_50_tool_surface() -> None:
+    mcp_readme = (ROOT / "mcp" / "README.zh-CN.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "evermind" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "50 个工具" in mcp_readme
+    assert "EVEROS_BASE_URL" not in mcp_readme
+    assert "50-tool MCP surface" in skill
+    assert "14 built-in code graph tools, and 14 built-in archive tools" not in skill
+    assert not (ROOT / "mcp" / "smithery.yaml").exists()
 
 
 def test_config_directory_has_one_unified_config_file() -> None:

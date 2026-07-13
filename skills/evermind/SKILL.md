@@ -6,7 +6,7 @@ description: Core EverMind memory skill. Use at the start of every session and a
 # EverMind Skill
 
 EverMind gives AI coding agents persistent local memory across sessions.
-It exposes one MCP tool surface: 14 EverMind memory tools, 14 built-in code graph tools, and 14 built-in archive tools. Basic use needs no cloud, external CLI, or API keys.
+It exposes one 50-tool MCP surface: 14 EverMind memory tools, 13 code graph tools, 20 local Basic Memory tools, 2 reviewed archive update tools, and 1 unified project lifecycle tool. Basic use needs no cloud, external CLI, or API keys.
 
 ## Two-Component Architecture
 

@@ -22,18 +22,22 @@ EverMind MCP 暴露 50 个工具：
 
 ## 配置
 
-公开配置统一使用 EverMind 变量名：
+使用本地 `.env` 配置运行时。MCP 客户端配置只负责启动服务器进程。
 
 ```text
-EVERMIND_MCP_BACKEND=everos
-EVERMIND_MCP_DEFAULT_SPACE=
-EVERMIND_MCP_USER_ID=mcp-user
-EVEROS_BASE_URL=http://127.0.0.1:3378
-EVERMIND_ARCHIVE_ROOT=<archive-root>
-EVERMIND_ARCHIVE_WRITE_POLICY=candidate
+EVERMIND_DEFAULT_SPACE=coding:my-project
+EVERMIND_SILICONFLOW_API_KEY=sk-...
+EVERMIND_SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+EVERMIND_EMBED_PROVIDER=siliconflow
+EVERMIND_EMBED_MODEL=Qwen/Qwen3-Embedding-8B
+EVERMIND_EMBED_DIM=512
+EVERMIND_RERANK_ENABLED=true
+EVERMIND_RERANK_MODEL=Qwen/Qwen3-Reranker-8B
+EVERMIND_LLM_ENABLED=true
+EVERMIND_LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash
 ```
 
-正常客户端接入请使用父项目生成的配置片段。
+外部 API 完全可选；未配置时默认使用内置本地多语言模型。正常客户端接入请使用父项目生成的配置片段。
 
 ## 开发
 
