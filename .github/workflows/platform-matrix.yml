@@ -108,16 +108,12 @@ jobs:
           --output-directory "$GITHUB_WORKSPACE/dist/runtime"
           --target '${{ matrix.platform }}'
 
-      - name: Verify runtime ZIP
+      - name: Verify bundled runtime
         if: github.event_name == 'workflow_dispatch' && inputs.build_runtime
         run: >-
-          uv run --frozen --directory mcp python -c
-          "import glob, zipfile;
-          paths = glob.glob('../dist/runtime/*.zip');
-          assert len(paths) == 1, paths;
-          bad = zipfile.ZipFile(paths[0]).testzip();
-          assert bad is None, bad;
-          print(paths[0])"
+          uv run --frozen --directory mcp python -m scripts.verify_runtime_archive
+          --archive-directory ../dist/runtime
+          --timeout 300
 
       - name: Upload runtime bundle
         if: github.event_name == 'workflow_dispatch' && inputs.build_runtime

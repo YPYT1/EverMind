@@ -171,10 +171,14 @@ def test_platform_ci_covers_supported_os_and_architectures() -> None:
         "build_runtime:",
         "msys2/setup-msys2@v2.32.0",
         "scripts/release-runtime",
+        "scripts.verify_runtime_archive",
         "actions/upload-artifact@v7.0.1",
         "compression-level: 0",
     ]:
         assert marker in workflow
+    assert workflow.index("scripts.verify_runtime_archive") < workflow.index(
+        "Upload runtime bundle"
+    )
 
 
 def test_required_mcp_bundle_assets_exist() -> None:
