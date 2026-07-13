@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.11 or newer — https://www.python.org/downloads/
+- Python 3.12 or newer — https://www.python.org/downloads/
 - Git — usually pre-installed; verify with `git --version`
 
 ## 1. Clone
@@ -19,7 +19,7 @@ bash scripts/setup-macos.sh
 ```
 
 The script will:
-- Check Python 3.11+ and uv (offers to install uv if missing)
+- Check Python 3.12+ and uv (offers to install uv if missing)
 - Install EverMind and all dependencies (`uv sync --extra full`)
 - Auto-configure Claude Desktop and Cursor MCP configs
 - Tell you how to add the `$evermind` skill to your project
@@ -65,16 +65,11 @@ If you prefer manual setup instead of the script, add this to `~/Library/Applica
 
 Replace `/path/to/EverMind` with your actual clone path.
 
-## Enable Vector Search (optional, recommended)
+## Semantic Search
 
-```bash
-cd EverMind/mcp
-uv pip install sqlite-vec sentence-transformers
-```
-
-Without this, EverMind uses keyword search only. With it, `recall()` uses hybrid BM25 + semantic search.
-
-**Note on offline mode**: Even without vector search installed, EverMind fully works using FTS5 keyword search. The `recall()` tool gracefully falls back to keyword-only mode and reports `"mode": "fts"` instead of `"mode": "hybrid"`.
+The bundled multilingual model provides offline English and Chinese semantic
+retrieval by default. A configured external embedding or rerank API is preferred
+while healthy; EverMind falls back to the local profile on failure.
 
 ## Troubleshooting
 

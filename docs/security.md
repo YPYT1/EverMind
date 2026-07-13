@@ -24,17 +24,10 @@ Do not store:
 
 If a setup requires a secret, document the variable name and where it should be placed, not the value.
 
-## Local Service Exposure
+## Local Transport
 
-The runtime health endpoint and memory API should remain local by default.
-
-Recommended:
-
-```text
-host = 127.0.0.1
-```
-
-Avoid binding to `0.0.0.0` unless you understand the network exposure and provide an authentication layer.
+EverMind uses MCP stdio and does not start a network listener. Do not add a
+separate HTTP memory service or expose the local catalog over the network.
 
 ## Permanent Archive Writes
 

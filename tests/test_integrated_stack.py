@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import platform
 import shutil
@@ -53,7 +54,71 @@ def copy_script_fixture(tmp_path: Path) -> Path:
             shutil.copy2(source, target)
     (fixture / "mcp").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "mcp" / "pyproject.toml", fixture / "mcp" / "pyproject.toml")
+    create_minimal_vendored_codebase_fixture(fixture / "third_party" / "codebase-memory-mcp")
+    create_minimal_basic_memory_fixture(fixture / "third_party" / "basic-memory")
     return fixture
+
+
+def create_minimal_vendored_codebase_fixture(cbm: Path) -> None:
+    cbm.mkdir(parents=True, exist_ok=True)
+    (cbm / "src" / "mcp").mkdir(parents=True, exist_ok=True)
+    internal = cbm / "internal" / "cbm"
+    grammars = internal / "vendored" / "grammars"
+    lsp = internal / "lsp"
+    zlib = cbm / "vendored" / "zlib"
+    grammars.mkdir(parents=True, exist_ok=True)
+    lsp.mkdir(parents=True, exist_ok=True)
+    zlib.mkdir(parents=True, exist_ok=True)
+    (cbm / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+    (cbm / "THIRD_PARTY.md").write_text("third-party notices\n", encoding="utf-8")
+    (cbm / "README.md").write_text("fixture vendored codebase-memory-mcp\n", encoding="utf-8")
+    (cbm / "Makefile.cbm").write_text("cbm:\n\t@echo fixture\n", encoding="utf-8")
+    (cbm / "src" / "mcp" / "mcp.c").write_text("/* fixture */\n", encoding="utf-8")
+    (internal / "lsp_all.c").write_text("/* fixture */\n", encoding="utf-8")
+    (zlib / "LICENSE").write_text("zlib license\n", encoding="utf-8")
+    (zlib / "zlib.h").write_text("/* fixture */\n", encoding="utf-8")
+    (zlib / "inflate.c").write_text("/* fixture */\n", encoding="utf-8")
+    (grammars / "MANIFEST.md").write_text("Grammars: 159\n", encoding="utf-8")
+    for index in range(159):
+        (grammars / f"lang_{index:03d}").mkdir()
+    lean = grammars / "lean"
+    lean.mkdir(exist_ok=True)
+    chunks = lean / "parser.c.chunks"
+    chunks.mkdir()
+    content = b"fixture lean parser\n"
+    (chunks / "parser.c.part000").write_bytes(content)
+    (chunks / "parser.c.sha256").write_text(f"{hashlib.sha256(content).hexdigest()}  parser.c\n", encoding="ascii")
+    (chunks / "parser.c.size").write_text(str(len(content)), encoding="ascii")
+    for name in [
+        "py_lsp.c",
+        "ts_lsp.c",
+        "php_lsp.c",
+        "cs_lsp.c",
+        "go_lsp.c",
+        "c_lsp.c",
+        "java_lsp.c",
+        "kotlin_lsp.c",
+        "rust_lsp.c",
+    ]:
+        (lsp / name).write_text("/* fixture */\n", encoding="utf-8")
+
+
+def create_minimal_basic_memory_fixture(bm: Path) -> None:
+    (bm / "src" / "basic_memory" / "mcp").mkdir(parents=True, exist_ok=True)
+    (bm / "src" / "basic_memory" / "markdown").mkdir(parents=True, exist_ok=True)
+    (bm / "LICENSE").write_text(
+        "                    GNU AFFERO GENERAL PUBLIC LICENSE\n",
+        encoding="utf-8",
+    )
+    (bm / "pyproject.toml").write_text(
+        "[project]\nname = \"basic-memory\"\nlicense = { text = \"AGPL-3.0-or-later\" }\n",
+        encoding="utf-8",
+    )
+    (bm / "src" / "basic_memory" / "mcp" / "__init__.py").write_text("", encoding="utf-8")
+    (bm / "src" / "basic_memory" / "markdown" / "entity_parser.py").write_text(
+        "def parse_entities(text):\n    return []\n",
+        encoding="utf-8",
+    )
 
 
 def test_required_top_level_layout_exists() -> None:
@@ -77,17 +142,52 @@ def test_required_top_level_layout_exists() -> None:
     assert missing == []
 
 
+def test_platform_ci_covers_supported_os_and_architectures() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "platform-matrix.yml").read_text(
+        encoding="utf-8"
+    )
+    for runner in [
+        "ubuntu-24.04",
+        "ubuntu-24.04-arm",
+        "macos-15-intel",
+        "macos-15",
+        "windows-2025",
+    ]:
+        assert runner in workflow
+    assert "windows-11-arm" not in workflow
+    assert workflow.count("platform:") == 5
+    for marker in [
+        "lfs: true",
+        "actions/checkout@v7.0.0",
+        "actions/setup-python@v6.3.0",
+        "astral-sh/setup-uv@v8.3.2",
+        'python-version: "3.12"',
+        "architecture: ${{ matrix.python_arch }}",
+        "python_arch: arm64",
+        "python_arch: x64",
+        "uv sync --frozen",
+        "test_release_consistency.py",
+        "test_package_source_bundle.py",
+        "build_runtime:",
+        "msys2/setup-msys2@v2.32.0",
+        "scripts/release-runtime",
+        "scripts.verify_runtime_archive",
+        "actions/upload-artifact@v7.0.1",
+        "compression-level: 0",
+    ]:
+        assert marker in workflow
+    assert workflow.index("scripts.verify_runtime_archive") < workflow.index(
+        "Upload runtime bundle"
+    )
+
+
 def test_required_mcp_bundle_assets_exist() -> None:
     mcp_root = ROOT / "mcp"
     expected = [
         "README.md",
         "README.zh-CN.md",
         "CHANGELOG.md",
-        "notes.md",
-        "notes.zh-CN.md",
         "pyproject.toml",
-        "task_plan.md",
-        "task_plan.zh-CN.md",
         "uv.lock",
         "src",
         "tests",
@@ -108,8 +208,6 @@ def test_required_user_setup_scripts_exist() -> None:
         "scripts/windows/configure.ps1",
         "scripts/windows/setup-user.ps1",
         "scripts/windows/start-mcp.ps1",
-        "scripts/windows/start-everos.ps1",
-        "scripts/windows/install-everos-nssm.ps1",
         "scripts/macos/bootstrap.sh",
         "scripts/macos/install.sh",
         "scripts/macos/install-all.sh",
@@ -118,20 +216,183 @@ def test_required_user_setup_scripts_exist() -> None:
         "scripts/macos/configure.sh",
         "scripts/macos/setup-user.sh",
         "scripts/macos/start-mcp.sh",
-        "scripts/macos/start-everos.sh",
     ]
     missing = [item for item in expected if not (ROOT / item).exists()]
     assert missing == []
 
 
-def test_quick_start_scripts_install_integrated_engines() -> None:
+def test_runtime_release_wrappers_build_engine_and_call_shared_orchestrator() -> None:
+    windows = (ROOT / "scripts" / "release-runtime.ps1").read_text(encoding="utf-8")
+    unix = (ROOT / "scripts" / "release-runtime.sh").read_text(encoding="utf-8")
+
+    for marker in [
+        "build-vendored-codebase.ps1",
+        "scripts.release_runtime_bundle",
+        "dist\\runtime",
+        "--codebase-binary",
+        "--output-directory",
+    ]:
+        assert marker in windows
+    for marker in [
+        "build-vendored-codebase.sh",
+        "scripts.release_runtime_bundle",
+        "dist/runtime",
+        "--codebase-binary",
+        "--output-directory",
+    ]:
+        assert marker in unix
+    assert "--target" in windows
+    assert "--target" in unix
+
+
+def test_vendored_zlib_build_configures_unistd_on_posix() -> None:
+    makefile = (
+        ROOT / "third_party" / "codebase-memory-mcp" / "Makefile.cbm"
+    ).read_text(encoding="utf-8")
+
+    assert "ZLIB_POSIX_CFLAGS := -DHAVE_UNISTD_H=1" in makefile
+    assert "ifeq ($(IS_MINGW),yes)\nZLIB_POSIX_CFLAGS :=" in makefile
+    for variable in ["ZLIB_CFLAGS_TEST", "ZLIB_CFLAGS_PROD"]:
+        definition = next(
+            line for line in makefile.splitlines() if line.startswith(f"{variable} =")
+        )
+        assert "$(ZLIB_POSIX_CFLAGS)" in definition
+
+
+def test_windows_codebase_build_uses_shell_name_from_path() -> None:
+    script = (ROOT / "scripts" / "build-vendored-codebase.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '$makeArgs += "SHELL=sh.exe"' in script
+    assert "SHELL=$shellPath" not in script
+
+
+def test_unix_runtime_release_project_root_controls_default_output(
+    tmp_path: Path,
+) -> None:
+    bash = shutil.which("bash")
+    if platform.system() == "Windows":
+        git_exec = run(["git", "--exec-path"]).stdout.strip()
+        candidate = Path(git_exec).resolve().parents[2] / "usr" / "bin" / "bash.exe"
+        bash = str(candidate) if candidate.is_file() else None
+    if not bash:
+        return
+
+    project_root = tmp_path / "project"
+    binary = tmp_path / "codebase-memory-mcp"
+    fake_bin = tmp_path / "bin"
+    captured = tmp_path / "uv-args.txt"
+    project_root.mkdir()
+    fake_bin.mkdir()
+    binary.write_bytes(b"binary")
+    uv = fake_bin / "uv"
+    uv.write_text(
+        "#!/usr/bin/env sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["CAPTURED_ARGS"] = str(captured)
+    subprocess.run(
+        [
+            bash,
+            str(ROOT / "scripts" / "release-runtime.sh"),
+            "--project-root",
+            str(project_root),
+            "--codebase-binary",
+            str(binary),
+            "--target",
+            "linux-x86_64",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=True,
+    )
+
+    args = captured.read_text(encoding="utf-8").splitlines()
+    output_index = args.index("--output-directory") + 1
+    assert Path(args[output_index]) == project_root / "dist" / "runtime"
+
+
+def test_quick_start_scripts_use_builtin_engines_by_default() -> None:
     windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
     macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")
 
     assert "install-all.ps1" in windows
-    assert "Integrated engines installed" in windows
+    assert "Built-in engines configured" in windows
     assert "install-all.sh" in macos
-    assert "Integrated engines installed" in macos
+    assert "Built-in engines configured" in macos
+
+
+def test_quick_start_scripts_require_python_312() -> None:
+    windows = (ROOT / "scripts" / "setup-windows.ps1").read_text(encoding="utf-8")
+    macos = (ROOT / "scripts" / "setup-macos.sh").read_text(encoding="utf-8")
+
+    assert "$minor -ge 12" in windows
+    assert '"$ver" -ge 312' in macos
+    assert "Python 3.12+" in windows
+    assert "Python 3.12+" in macos
+    assert "Python 3.11" not in windows
+    assert "Python 3.11" not in macos
+
+
+def test_windows_setup_script_has_valid_powershell_syntax() -> None:
+    if platform.system() != "Windows":
+        return
+
+    script = ROOT / "scripts" / "setup-windows.ps1"
+    command = (
+        "$tokens=$null; $errors=$null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{script}', "
+        "[ref]$tokens, [ref]$errors); if($errors.Count){exit 1}"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+        check=True,
+    )
+
+
+def test_install_all_scripts_do_not_install_external_engines_by_default() -> None:
+    windows = (ROOT / "scripts" / "windows" / "install-all.ps1").read_text(encoding="utf-8")
+    macos = (ROOT / "scripts" / "macos" / "install-all.sh").read_text(encoding="utf-8")
+
+    forbidden = [
+        "InstallExternalEngines",
+        "INSTALL_EXTERNAL_ENGINES",
+        "basic-memory==",
+        "github.com/DeusData/codebase-memory-mcp",
+        "EVERMIND_CODEBASE_MEMORY_PATH",
+    ]
+    for marker in forbidden:
+        assert marker not in windows
+        assert marker not in macos
+    assert "Using EverMind built-in local archive and code graph engines" in windows
+    assert "Using EverMind built-in local archive and code graph engines" in macos
+    assert "install-toolchain.ps1" in windows
+    assert "install-toolchain.sh" in macos
+    assert "build-vendored-codebase.ps1" in windows
+    assert "build-vendored-codebase.sh" in macos
+
+
+def test_install_scripts_install_source_fusion_toolchains() -> None:
+    windows = (ROOT / "scripts" / "windows" / "install-toolchain.ps1").read_text(encoding="utf-8")
+    macos = (ROOT / "scripts" / "macos" / "install-toolchain.sh").read_text(encoding="utf-8")
+
+    for marker in [
+        "BrechtSanders.WinLibs.POSIX.UCRT",
+        "Git.Git",
+        "LLVM.LLVM",
+        "ezwinports.make",
+        "Kitware.CMake",
+        "Ninja-build.Ninja",
+    ]:
+        assert marker in windows
+    for marker in ["gcc", "g++", "sh", "mkdir", "rm"]:
+        assert marker in windows
+    for marker in ["xcode-select --install", "brew install", "llvm", "make", "cmake", "ninja"]:
+        assert marker in macos
 
 
 def test_json_and_toml_templates_parse() -> None:
@@ -153,19 +414,32 @@ def test_no_standalone_third_party_notice_files() -> None:
     assert not (ROOT / "third_party.lock.yaml").exists()
 
 
-def test_env_example_contains_orchestration_and_cloud_reserved_fields() -> None:
+def test_env_example_contains_local_runtime_fields() -> None:
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
     for key in [
         "EVERMIND_HOME=",
         "EVERMIND_DEFAULT_SPACE=",
         "EVERMIND_ARCHIVE_ROOT=",
         "EVERMIND_ARCHIVE_CANDIDATE_DIR=",
-        "EVERMIND_CODEBASE_MEMORY_PATH=",
         "EVERMIND_EMBED_MODEL=Qwen/Qwen3-Embedding-8B",
         "EVERMIND_RERANK_MODEL=Qwen/Qwen3-Reranker-8B",
         "EVERMIND_LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash",
     ]:
         assert key in text
+    assert "EVEROS_" not in text
+    assert "EVERMIND_CODEBASE_MEMORY_PATH" not in text
+    assert "EVERMIND_BASIC_MEMORY_PATH" not in text
+
+
+def test_public_mcp_docs_and_skill_match_local_50_tool_surface() -> None:
+    mcp_readme = (ROOT / "mcp" / "README.zh-CN.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "evermind" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "50 个工具" in mcp_readme
+    assert "EVEROS_BASE_URL" not in mcp_readme
+    assert "50-tool MCP surface" in skill
+    assert "14 built-in code graph tools, and 14 built-in archive tools" not in skill
+    assert not (ROOT / "mcp" / "smithery.yaml").exists()
 
 
 def test_config_directory_has_one_unified_config_file() -> None:
@@ -187,25 +461,25 @@ def test_unified_config_defines_write_policy_and_router() -> None:
         assert section in config
 
 
-def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
+def test_docs_explain_integrated_components_and_local_only_boundary() -> None:
     components = (ROOT / "docs" / "components.md").read_text(encoding="utf-8")
-    roadmap = (ROOT / "docs" / "local-to-cloud-roadmap.md").read_text(
-        encoding="utf-8"
-    )
+    security = (ROOT / "docs" / "security.md").read_text(encoding="utf-8")
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     for phrase in [
         "EverMind MCP",
-        "Codebase Memory",
-        "Basic Memory",
-        "archive_bridge.py",
+        "50 tools over stdio",
+        "source-fused code graph engine",
+        "Local Basic Memory tools execute in process",
+        "archive_engine.py",
         "codebase_engine.py",
+        "provider_boundary.py",
     ]:
         assert phrase in components
     assert "MCP Server" in architecture
     assert "Storage" in architecture
-    assert "42 unified tools" in architecture
-    assert "EVERMIND_MEMORY_MODE=local" in roadmap
-    assert "EVERMIND_SYNC_MODE=off" in roadmap
+    assert "50 unified tools" in architecture
+    assert "local-only runtime boundary" in components
+    assert "uses MCP stdio and does not start a network listener" in security
 
 
 def test_readme_explains_value_principles_and_folded_commands() -> None:
@@ -215,9 +489,9 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
     ja = (ROOT / "README.ja.md").read_text(encoding="utf-8")
     for phrase in [
         "persistent memory across sessions",
-        "42 tools",
-        "codebase-memory-mcp v0.9.0",
-        "basic-memory v0.22.1",
+        "50 tools",
+        "vendored MIT",
+        "Basic Memory executes from",
         "update_memory",
         "Memory Lifecycle",
         "Built for engineers",
@@ -225,7 +499,7 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
         assert phrase in readme
     for phrase in [
         "跨会话的持久记忆",
-        "42 个工具",
+        "50 个工具",
         "update_memory",
         "记忆生命周期",
         "社群",
@@ -233,14 +507,14 @@ def test_readme_explains_value_principles_and_folded_commands() -> None:
         assert phrase in zh
     for phrase in [
         "跨會話的持久記憶",
-        "42 個工具",
+        "50 個工具",
         "update_memory",
         "社群",
     ]:
         assert phrase in zht
     for phrase in [
         "セッションを越えた永続的なメモリ",
-        "42 個のツール",
+        "50 個のツール",
         "update_memory",
         "コミュニティ",
     ]:
@@ -305,8 +579,6 @@ def test_render_configs_updates_env_file(tmp_path: Path) -> None:
             str(env_file),
             "--evermind-home",
             str(tmp_path / "home"),
-            "--everos-root",
-            str(tmp_path / "home" / "everos"),
             "--archive-root",
             str(tmp_path / "basic"),
             "--archive-candidate-dir",
@@ -316,7 +588,6 @@ def test_render_configs_updates_env_file(tmp_path: Path) -> None:
     assert result.returncode == 0
     rendered = env_file.read_text(encoding="utf-8")
     assert f"EVERMIND_HOME={tmp_path / 'home'}" in rendered
-    assert f"EVEROS_ROOT={tmp_path / 'home' / 'everos'}" in rendered
     assert f"EVERMIND_ARCHIVE_ROOT={tmp_path / 'basic'}" in rendered
     assert f"EVERMIND_ARCHIVE_CANDIDATE_DIR={tmp_path / 'basic' / '.candidates'}" in rendered
 
@@ -337,7 +608,7 @@ def test_windows_install_all_skip_install_generates_local_config(tmp_path: Path)
             "Bypass",
             "-File",
             str(project_root / "scripts" / "windows" / "install-all.ps1"),
-            "-SkipToolInstall",
+            "-SkipToolchainInstall",
             "-ProjectRoot",
             str(project_root),
             "-EverMindHome",
@@ -354,7 +625,6 @@ def test_windows_install_all_skip_install_generates_local_config(tmp_path: Path)
         encoding="utf-8-sig"
     )
     assert "<EVERMIND_ROOT>" not in rendered
-    assert "<EVEROS_ROOT>" not in rendered
     assert "<EVERMIND_ARCHIVE_ROOT>" not in rendered
 
 
@@ -377,16 +647,15 @@ def test_windows_configure_noninteractive_generates_user_assets(tmp_path: Path) 
             str(project_root / "scripts" / "windows" / "configure.ps1"),
             "-NonInteractive",
             "-CopySkillsInsteadOfSymlink",
+            "-SkipToolchainInstall",
             "-ProjectRoot",
             str(project_root),
             "-UserHome",
             str(user_home),
             "-EverMindHome",
             str(tmp_path / "EverMindMemory"),
-            "-LlmApiKey",
-            "dummy-llm",
-            "-EmbeddingApiKey",
-            "dummy-embedding",
+            "-SiliconFlowApiKey",
+            "dummy-siliconflow",
         ],
         cwd=project_root,
         timeout=90,
@@ -395,30 +664,110 @@ def test_windows_configure_noninteractive_generates_user_assets(tmp_path: Path) 
     assert "Configuration complete" in result.stdout
     assert env_file.exists()
     env_text = env_file.read_text(encoding="utf-8")
-    assert "EVEROS_LLM__API_KEY=dummy-llm" in env_text
-    assert "EVEROS_EMBEDDING__API_KEY=dummy-embedding" in env_text
+    assert "EVERMIND_SILICONFLOW_API_KEY=dummy-siliconflow" in env_text
     assert (generated / "mcp-config" / "codex.toml").exists()
     assert (user_home / ".agents" / "skills" / "evermind" / "SKILL.md").exists()
 
 
-def test_external_basic_memory_cli_connectivity() -> None:
-    if not shutil.which("basic-memory"):
-        raise AssertionError("basic-memory CLI is not installed or not on PATH")
-    version = run(["basic-memory", "--version"], timeout=30).stdout
-    assert "Basic Memory version" in version
-    status = run(["basic-memory", "status"], timeout=60).stdout
-    assert "Status" in status
+def test_external_engine_cli_connectivity_is_not_required() -> None:
+    windows_check = (ROOT / "scripts" / "windows" / "check-all.ps1").read_text(encoding="utf-8")
+    macos_check = (ROOT / "scripts" / "macos" / "check-all.sh").read_text(encoding="utf-8")
+
+    assert "Built-in EverMind Archive engine available" in windows_check
+    assert "Built-in EverMind Code Graph engine available" in windows_check
+    assert "Vendored codebase-memory-mcp source integrated" in windows_check
+    assert "Built-in EverMind Archive engine available" in macos_check
+    assert "Built-in EverMind Code Graph engine available" in macos_check
+    assert "Vendored codebase-memory-mcp source integrated" in macos_check
 
 
-def test_external_codebase_memory_cli_connectivity() -> None:
-    if not shutil.which("codebase-memory-mcp"):
-        raise AssertionError("codebase-memory-mcp CLI is not installed or not on PATH")
-    version = run(["codebase-memory-mcp", "--version"], timeout=30).stdout
-    assert "codebase-memory-mcp" in version
-    projects = run(
-        ["codebase-memory-mcp", "cli", "list_projects", "{}"], timeout=60
-    ).stdout
-    assert '"projects"' in projects
+def test_basic_memory_source_is_integrated_with_copyleft_boundary() -> None:
+    bm = ROOT / "third_party" / "basic-memory"
+    assert (bm / "LICENSE").read_text(encoding="utf-8").startswith(
+        "                    GNU AFFERO GENERAL PUBLIC LICENSE"
+    )
+    assert "AGPL-3.0-or-later" in (bm / "pyproject.toml").read_text(encoding="utf-8")
+    assert (bm / "src" / "basic_memory" / "mcp").is_dir()
+    assert (bm / "src" / "basic_memory" / "markdown" / "entity_parser.py").exists()
+    assert not (bm / ".git").exists()
+    notice = (ROOT / "third_party" / "README.md").read_text(encoding="utf-8")
+    assert "basic-memory" in notice
+    assert "AGPL-3.0-or-later" in notice
+
+
+def test_vendored_codebase_memory_source_is_integrated() -> None:
+    cbm = ROOT / "third_party" / "codebase-memory-mcp"
+    assert (cbm / "LICENSE").read_text(encoding="utf-8").startswith("MIT License")
+    assert (cbm / "Makefile.cbm").exists()
+    assert (cbm / "src" / "mcp" / "mcp.c").exists()
+    assert (cbm / "internal" / "cbm" / "lsp_all.c").exists()
+    lsp = cbm / "internal" / "cbm" / "lsp"
+    grammars = cbm / "internal" / "cbm" / "vendored" / "grammars"
+    for name in [
+        "py_lsp.c",
+        "ts_lsp.c",
+        "php_lsp.c",
+        "cs_lsp.c",
+        "go_lsp.c",
+        "c_lsp.c",
+        "java_lsp.c",
+        "kotlin_lsp.c",
+        "rust_lsp.c",
+    ]:
+        assert (lsp / name).exists()
+    assert (grammars / "MANIFEST.md").exists()
+    assert len([path for path in grammars.iterdir() if path.is_dir()]) >= 159
+    chunks = grammars / "lean" / "parser.c.chunks"
+    assert (chunks / "parser.c.sha256").exists()
+    assert sorted(path.name for path in chunks.glob("parser.c.part*")) == [
+        "parser.c.part000",
+        "parser.c.part001",
+        "parser.c.part002",
+    ]
+    zlib = cbm / "vendored" / "zlib"
+    assert (zlib / "LICENSE").exists()
+    assert (zlib / "zlib.h").exists()
+    assert (zlib / "inflate.c").exists()
+    makefile = (cbm / "Makefile.cbm").read_text(encoding="utf-8")
+    assert "-Ivendored/zlib" in makefile
+    assert "-lz" not in makefile
+
+
+def test_lean_parser_chunks_preserve_repository_bytes() -> None:
+    chunks = (
+        ROOT
+        / "third_party"
+        / "codebase-memory-mcp"
+        / "internal"
+        / "cbm"
+        / "vendored"
+        / "grammars"
+        / "lean"
+        / "parser.c.chunks"
+    )
+    parts = sorted(chunks.glob("parser.c.part*"))
+
+    for part in [parts[0], parts[-1]]:
+        relative = part.relative_to(ROOT).as_posix()
+        result = run(["git", "check-attr", "text", "--", relative])
+        assert result.stdout.strip().endswith(": text: unset")
+
+
+def test_vendored_source_has_no_plain_git_files_over_github_limit() -> None:
+    restored_lean_parser = ROOT / "third_party" / "codebase-memory-mcp" / "internal" / "cbm" / "vendored" / "grammars" / "lean" / "parser.c"
+    oversized = [
+        path
+        for path in (ROOT / "third_party" / "codebase-memory-mcp").rglob("*")
+        if path.is_file()
+        and path.stat().st_size >= 100_000_000
+        and path != restored_lean_parser
+        and "parser.c.chunks" not in path.parts
+        and "build" not in path.parts
+    ]
+    assert "third_party/codebase-memory-mcp/internal/cbm/vendored/grammars/lean/parser.c" in (
+        ROOT / ".gitignore"
+    ).read_text(encoding="utf-8")
+    assert oversized == []
 
 
 def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: Path) -> None:
@@ -436,7 +785,7 @@ def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: P
             "Bypass",
             "-File",
             str(project_root / "scripts" / "windows" / "install-all.ps1"),
-            "-SkipToolInstall",
+            "-SkipToolchainInstall",
             "-ProjectRoot",
             str(project_root),
             "-EverMindHome",
@@ -446,14 +795,9 @@ def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: P
         timeout=90,
     )
     text = env_file.read_text(encoding="utf-8")
-    for key in [
-        "EVEROS_LLM__API_KEY",
-        "EVEROS_MULTIMODAL__API_KEY",
-        "EVEROS_EMBEDDING__API_KEY",
-        "EVEROS_RERANK__API_KEY",
-    ]:
-        text = text.replace(f"# {key}=", f"{key}=dummy-local-check")
-        text = text.replace(f"{key}=", f"{key}=dummy-local-check")
+    key = "EVERMIND_SILICONFLOW_API_KEY"
+    text = text.replace(f"# {key}=", f"{key}=dummy-local-check")
+    text = text.replace(f"{key}=", f"{key}=dummy-local-check")
     env_file.write_text(text, encoding="utf-8")
 
     result = run(
@@ -473,12 +817,10 @@ def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: P
     assert "EverMind full stack checks passed" in result.stdout
 
 
-def test_mcp_bridge_pytest_suite_passes() -> None:
+def test_mcp_interface_pytest_suite_passes() -> None:
     result = run(
         ["uv", "run", "--python", "3.12", "pytest", "-q"],
         cwd=ROOT / "mcp",
-        timeout=180,
+        timeout=300,
     )
     assert "passed" in result.stdout
-
-

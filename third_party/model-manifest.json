@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "selected_at": "2026-07-10",
+  "selection_rule": "smallest candidate satisfying every suite with Hit@3 >= 0.95 and MRR >= 0.90",
+  "model_id": "intfloat/multilingual-e5-small",
+  "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+  "license": "MIT",
+  "dimensions": 384,
+  "query_prefix": "query: ",
+  "document_prefix": "passage: ",
+  "max_sequence_length": 512,
+  "artifact": {
+    "path": "third_party/models/multilingual-e5-small",
+    "file_count": 10,
+    "bytes": 493292828,
+    "tree_sha256": "c78988c745782001597db940ddbb894357f130867dc77a4e13a5d5512b50c2c4"
+  },
+  "corpus": {
+    "path": "mcp/tests/fixtures/retrieval-quality.json",
+    "sha256": "508c2c5797445a6f4c1851bcbe5648a8624abdecb368b8edf1c222b3f611fdc0"
+  },
+  "metrics": {
+    "english_exact": {"hit_at_3": 1.0, "mrr": 1.0},
+    "english_paraphrase": {"hit_at_3": 1.0, "mrr": 0.95},
+    "chinese_exact": {"hit_at_3": 1.0, "mrr": 1.0},
+    "chinese_paraphrase": {"hit_at_3": 1.0, "mrr": 1.0},
+    "code_identifiers": {"hit_at_3": 1.0, "mrr": 1.0}
+  },
+  "candidates": [
+    {
+      "model_id": "BAAI/bge-small-zh-v1.5",
+      "revision": "7999e1d3359715c523056ef9478215996d62a620",
+      "artifact_bytes": 96405966,
+      "artifact_tree_sha256": "ddcc3969a61ebf1e4ed9c0c9fcfde411314af8f6e3aaebd24dfa6f0e2af0dc9e",
+      "meets_gate": false,
+      "failed_suites": ["english_paraphrase", "chinese_paraphrase"]
+    },
+    {
+      "model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
+      "artifact_bytes": 479729010,
+      "artifact_tree_sha256": "3383ad76d128cd158f07fb3482bcb7bc4fe0b4b119aa29f815b1b75b80cebbe3",
+      "meets_gate": false,
+      "failed_suites": ["english_paraphrase"]
+    },
+    {
+      "model_id": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "artifact_bytes": 493292828,
+      "artifact_tree_sha256": "c78988c745782001597db940ddbb894357f130867dc77a4e13a5d5512b50c2c4",
+      "meets_gate": true,
+      "failed_suites": []
+    }
+  ]
+}

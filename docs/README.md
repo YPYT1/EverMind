@@ -21,9 +21,7 @@ This directory is the complete user and maintainer documentation for EverMind.
 | [MCP Tools](mcp-tools.md) | The tools exposed to agents and when to use each one. |
 | [Skills](skills.md) | How EverMind skills shape agent behavior. |
 | [Agent Instructions](agents.md) | How to configure agents to use EverMind. |
-| [v2 Redesign Notes](v2-redesign.md) | Design decisions and changes introduced in v2. |
 | [Write Policy](write-policy.md) | Which facts are stored automatically, proposed for review, or blocked. |
-| [Local to Cloud Roadmap](local-to-cloud-roadmap.md) | Future cloud modes and the v1 local-first boundary. |
 
 ## Operations
 
@@ -39,4 +37,3 @@ This directory is the complete user and maintainer documentation for EverMind.
 3. Copy the generated MCP snippet for your agent.
 4. Read [MCP Tools](mcp-tools.md) so you know what the agent can call.
 5. Read [Write Policy](write-policy.md) before allowing official long-term archive writes.
-

@@ -5,20 +5,27 @@ Replaces the old 2876-line memory_service.py with a clean, modular implementatio
 that delegates storage, embedding, and type concerns to dedicated modules.
 """
 
+import hashlib
+import json
 import logging
 import re
 import threading
 import time
+import unicodedata
 from collections import deque
+from collections.abc import Awaitable, Callable
 
 from .storage import EmbeddedStorage
-from .embedding import EmbeddingManager
+from .embedding import EmbeddingManager, EmbeddingProfile
 from .reranker import RerankerManager
 from .llm import LLMManager
+from .legacy_migration import LegacyCatalogMigrator
 from .config_v2 import EverMindConfig
 from .content_guard import scan_sensitive_content
-from .archive_bridge import ArchiveBridge
+from .archive_engine import ArchiveEngine, archive_project_path
 from .codebase_engine import CodebaseEngine
+from .provider_boundary import local_provider_boundary
+from .project_catalog import UnifiedProjectResolver
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +81,43 @@ ENTITY_PATTERN = re.compile(
     r"[\w./\\-]+\.(?:py|ts|tsx|js|jsx|cts|mts|vue|go|rs|java|cs|cpp|c|h|md|json|toml|yaml|yml)|"
     r"\b[A-Z][A-Za-z0-9_]{2,}\b"
 )
+VALUE_CLAIM_PATTERN = re.compile(
+    r"^\s*(?P<key>.{2,80}?)\s*(?:\bis\b|\bare\b|=|为|是)\s*"
+    r"(?P<value>[^\r\n]{1,120})\s*$",
+    re.IGNORECASE,
+)
+VALUE_CLAIM_STOP_KEYS = {"it", "this", "that", "there", "这里", "这个", "它"}
+
+
+def _normalize_claim_part(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = " ".join(normalized.strip().split()).casefold()
+    return normalized.strip(" `\"'.,;:：。")
+
+
+def _value_claim(content: str) -> tuple[str, str] | None:
+    match = VALUE_CLAIM_PATTERN.match(content or "")
+    if match is None:
+        return None
+    key = _normalize_claim_part(match.group("key"))
+    key = re.sub(r"^(?:the|a|an)\s+", "", key)
+    value = _normalize_claim_part(match.group("value"))
+    if not key or not value or key in VALUE_CLAIM_STOP_KEYS:
+        return None
+    return key, value
+
+
+def _conflict_id(claim_key: str) -> str:
+    return hashlib.sha256(claim_key.encode("utf-8")).hexdigest()
+
+
+def _value_conflict_keys(memories: list[dict]) -> set[str]:
+    values: dict[str, set[str]] = {}
+    for memory in memories:
+        claim = _value_claim(memory.get("content", ""))
+        if claim is not None:
+            values.setdefault(claim[0], set()).add(claim[1])
+    return {key for key, claim_values in values.items() if len(claim_values) > 1}
 
 
 def _detect_memory_type(content: str, importance: int) -> str:
@@ -83,7 +127,22 @@ def _detect_memory_type(content: str, importance: int) -> str:
     if any(k in lower for k in ("bug", "error", "fix", "crash", "exception")):
         return TYPE_BUG
 
-    if any(k in lower for k in ("how to", "步骤", "流程", "procedure", "deploy", "run", "如何", "方法", "命令", "运行", "执行")):
+    if any(
+        k in lower
+        for k in (
+            "how to",
+            "步骤",
+            "流程",
+            "procedure",
+            "deploy",
+            "run",
+            "如何",
+            "方法",
+            "命令",
+            "运行",
+            "执行",
+        )
+    ):
         return TYPE_PROCEDURAL
 
     if any(k in lower for k in ("decided", "decision", "chose", "选择", "决定")):
@@ -135,7 +194,20 @@ class MemoryService:
 
     def __init__(self, config: EverMindConfig) -> None:
         self.config = config
+        self._closing = threading.Event()
+        config.home.mkdir(parents=True, exist_ok=True)
         self.storage = EmbeddedStorage(config.db_path(config.default_space))
+        LegacyCatalogMigrator(config.home, self.storage).migrate()
+        self.storage.ensure_project(config.default_space)
+        self.projects = UnifiedProjectResolver(self.storage)
+        resolved_workspace = None
+        if config.workspace_root is not None:
+            try:
+                resolved_workspace = self.projects.resolve_workspace(
+                    config.workspace_root
+                )
+            except (OSError, ValueError):
+                logger.debug("Could not resolve configured workspace", exc_info=True)
         self.embedder = EmbeddingManager(
             model_name=config.embed_model,
             enabled=config.embed_enabled,
@@ -145,8 +217,25 @@ class MemoryService:
             dimensions=config.embed_dim,
             timeout_seconds=config.api_timeout_seconds,
             queue_max_retries=config.embed_queue_max_retries,
+            local_model_path=config.local_embed_model_path,
         )
         self.embedder.set_callback(self._on_embedding_ready)
+        pending_embeddings = []
+        for profile in self.embedder.profiles:
+            self.storage.register_embedding_profile(
+                profile.profile_id,
+                profile.provider,
+                profile.model,
+                profile.version,
+                profile.dimensions,
+            )
+            self.storage.ensure_profile_pending(profile.profile_id)
+            for memory_id, content in self.storage.pending_embedding_inputs(
+                profile.profile_id
+            ):
+                pending_embeddings.append(
+                    (memory_id, content, profile.profile_id)
+                )
         self.reranker = RerankerManager(
             model_name=config.rerank_model,
             enabled=config.rerank_enabled,
@@ -162,19 +251,21 @@ class MemoryService:
             api_base_url=config.siliconflow_base_url,
             timeout_seconds=config.api_timeout_seconds,
         )
-        self.space = config.default_space
+        self.space = (
+            resolved_workspace["project_id"]
+            if resolved_workspace is not None
+            else config.default_space
+        )
+        self.workspace_id = (
+            resolved_workspace["workspace_id"]
+            if resolved_workspace is not None
+            else None
+        )
         self.codebase = CodebaseEngine(config)
-        self.archive = ArchiveBridge(config)
+        self.archive = ArchiveEngine(config)
         self._last_recall_latency_ms: float | None = None
         self._recall_latencies: deque[float] = deque(maxlen=200)
         self._last_recall_trace: dict = {}
-
-        # CHANGE 6: Check embedding dimension matches storage expectation
-        if self.embedder.available:
-            actual_dim = self.embedder.dim
-            if not self.storage.check_embed_dim(actual_dim):
-                logger.warning("Vector search disabled due to embedding dimension mismatch.")
-                self.embedder._enabled = False
 
         if config.auto_reindex_on_start:
             try:
@@ -195,19 +286,319 @@ class MemoryService:
             name="evermind-briefing",
         )
         self._briefing_worker.start()
+        for memory_id, content, profile_id in pending_embeddings:
+            self.embedder.enqueue(memory_id, content, profile_id=profile_id)
 
     def set_space(self, space: str) -> None:
-        """Switch the active project space and backing SQLite database."""
+        """Switch the active project while retaining the shared catalog."""
         if not space or space == self.space:
             return
-        self.storage.close_all()
-        self.storage = EmbeddedStorage(self.config.db_path(space))
+        self.storage.ensure_project(space)
         self.space = space
-        if self.embedder.available:
-            actual_dim = self.embedder.dim
-            if not self.storage.check_embed_dim(actual_dim):
-                logger.warning("Vector search disabled due to embedding dimension mismatch.")
-                self.embedder._enabled = False
+
+    def close(self) -> None:
+        """Stop workers before closing the active SQLite connections."""
+        if not self._closing.is_set():
+            self._closing.set()
+            self._briefing_event.set()
+        self.embedder.close()
+        self._briefing_worker.join(timeout=5.0)
+        self.storage.close_all()
+
+    async def delete_project(
+        self,
+        *,
+        project: str | None = None,
+        project_name: str | None = None,
+        remove_basic_project: Callable[[dict], Awaitable[None]] | None = None,
+    ) -> dict:
+        """Detach one unified project while preserving all durable user data."""
+        if not project and not project_name:
+            return {
+                "ok": False,
+                "code": "PROJECT_IDENTIFIER_REQUIRED",
+                "message": "project or project_name is required",
+            }
+        try:
+            resolved_project = (
+                self.projects.resolve_project(project) if project else None
+            )
+            resolved_name = (
+                self.projects.resolve_project(project_name) if project_name else None
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "code": "PROJECT_NOT_FOUND",
+                "message": str(exc),
+            }
+        if (
+            resolved_project
+            and resolved_name
+            and resolved_project["project_id"] != resolved_name["project_id"]
+        ):
+            return {
+                "ok": False,
+                "code": "PROJECT_IDENTIFIER_MISMATCH",
+                "message": "project and project_name resolve to different projects",
+            }
+
+        target = resolved_project or resolved_name
+        if target is None:
+            return {
+                "ok": False,
+                "code": "PROJECT_NOT_FOUND",
+                "message": "project could not be resolved",
+            }
+        project_id = target["project_id"]
+        operation_id = "delete-" + hashlib.sha256(project_id.encode()).hexdigest()[:24]
+        now = int(time.time() * 1000)
+        existing_operation = self.storage.conn.execute(
+            "SELECT * FROM project_operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if (
+            existing_operation is not None
+            and existing_operation["state"] == "completed"
+        ):
+            return {
+                "ok": True,
+                "status": "detached",
+                "project_id": project_id,
+                "resumed": False,
+                "already_completed": True,
+            }
+        completed_steps = (
+            set(json.loads(existing_operation["completed_steps"]))
+            if existing_operation is not None
+            else set()
+        )
+        self.storage.conn.execute(
+            """
+            INSERT INTO project_operations
+                (operation_id, kind, state, payload, completed_steps, error,
+                 created_at, updated_at)
+            VALUES (?, 'delete_project', 'running', ?, ?, NULL, ?, ?)
+            ON CONFLICT(operation_id) DO UPDATE SET
+                state='running', error=NULL, updated_at=excluded.updated_at
+            """,
+            (
+                operation_id,
+                json.dumps({"project_id": project_id}),
+                json.dumps(sorted(completed_steps)),
+                now,
+                now,
+            ),
+        )
+        self.storage.conn.commit()
+
+        workspaces = self.storage.conn.execute(
+            "SELECT workspace_id FROM workspaces WHERE project_id=? ORDER BY workspace_id",
+            (project_id,),
+        ).fetchall()
+        for workspace in workspaces:
+            workspace_id = workspace["workspace_id"]
+            step = f"codebase:{workspace_id}"
+            if step in completed_steps:
+                continue
+            result = self.codebase.call("delete_project", {"project": workspace_id})
+            if result.get("ok") is False:
+                self.storage.conn.execute(
+                    """
+                    UPDATE project_operations
+                    SET error=?, completed_steps=?, updated_at=?
+                    WHERE operation_id=?
+                    """,
+                    (
+                        json.dumps(result),
+                        json.dumps(sorted(completed_steps)),
+                        int(time.time() * 1000),
+                        operation_id,
+                    ),
+                )
+                self.storage.conn.commit()
+                return {
+                    "ok": False,
+                    "code": "PROJECT_DETACH_CODEBASE_FAILED",
+                    "project_id": project_id,
+                    "operation_id": operation_id,
+                    "cause": result,
+                    "retryable": True,
+                }
+            completed_steps.add(step)
+            self._record_project_operation_steps(operation_id, completed_steps)
+
+        binding = self.storage.conn.execute(
+            """
+            SELECT basic_external_id, basic_name, basic_path
+            FROM basic_project_bindings
+            WHERE project_id=?
+            """,
+            (project_id,),
+        ).fetchone()
+        if "basic_project" not in completed_steps:
+            if binding is not None and remove_basic_project is not None:
+                try:
+                    await remove_basic_project(dict(binding))
+                except Exception as exc:
+                    self.storage.conn.execute(
+                        """
+                        UPDATE project_operations
+                        SET error=?, completed_steps=?, updated_at=?
+                        WHERE operation_id=?
+                        """,
+                        (
+                            json.dumps({"message": str(exc)}),
+                            json.dumps(sorted(completed_steps)),
+                            int(time.time() * 1000),
+                            operation_id,
+                        ),
+                    )
+                    self.storage.conn.commit()
+                    return {
+                        "ok": False,
+                        "code": "PROJECT_DETACH_BASIC_FAILED",
+                        "project_id": project_id,
+                        "operation_id": operation_id,
+                        "message": str(exc),
+                        "retryable": True,
+                    }
+            completed_steps.add("basic_project")
+            self._record_project_operation_steps(operation_id, completed_steps)
+
+        if "basic_binding" not in completed_steps:
+            self.storage.conn.execute(
+                "DELETE FROM basic_project_bindings WHERE project_id=?", (project_id,)
+            )
+            completed_steps.add("basic_binding")
+            self._record_project_operation_steps(operation_id, completed_steps)
+
+        detached_at = int(time.time() * 1000)
+        self.storage.conn.execute(
+            """
+            UPDATE workspaces
+            SET state='detached', detached_at=?, updated_at=?
+            WHERE project_id=?
+            """,
+            (detached_at, detached_at, project_id),
+        )
+        self.storage.conn.execute(
+            """
+            UPDATE projects
+            SET state='detached', detached_at=?, updated_at=?
+            WHERE project_id=?
+            """,
+            (detached_at, detached_at, project_id),
+        )
+        completed_steps.add("catalog_detached")
+        self.storage.conn.execute(
+            """
+            UPDATE project_operations
+            SET state='completed', completed_steps=?, error=NULL, updated_at=?
+            WHERE operation_id=?
+            """,
+            (
+                json.dumps(sorted(completed_steps)),
+                detached_at,
+                operation_id,
+            ),
+        )
+        self.storage.conn.commit()
+        return {
+            "ok": True,
+            "status": "detached",
+            "project_id": project_id,
+            "workspace_ids": [workspace["workspace_id"] for workspace in workspaces],
+            "operation_id": operation_id,
+            "preserved": ["repository", "markdown_archive", "durable_memories"],
+        }
+
+    def _record_project_operation_steps(
+        self, operation_id: str, completed_steps: set[str]
+    ) -> None:
+        self.storage.conn.execute(
+            """
+            UPDATE project_operations
+            SET completed_steps=?, updated_at=?
+            WHERE operation_id=?
+            """,
+            (
+                json.dumps(sorted(completed_steps)),
+                int(time.time() * 1000),
+                operation_id,
+            ),
+        )
+        self.storage.conn.commit()
+
+    def call_codebase(self, tool: str, arguments: dict | None = None) -> dict:
+        args = dict(arguments or {})
+        if tool == "index_repository" and args.get("repo_path"):
+            resolved = self.projects.resolve_workspace(args["repo_path"])
+            args["project"] = resolved["workspace_id"]
+            args["name"] = resolved["workspace_id"]
+            args["_evermind_workspace_id"] = resolved["workspace_id"]
+            args["_evermind_project_id"] = resolved["project_id"]
+            args["_evermind_display_name"] = resolved["display_name"]
+            result = self.codebase.call(tool, args)
+            if result.get("ok") is not False:
+                self.set_space(resolved["project_id"])
+                self.workspace_id = resolved["workspace_id"]
+                result.update(
+                    project=resolved["workspace_id"],
+                    workspace_id=resolved["workspace_id"],
+                    project_id=resolved["project_id"],
+                    display_name=resolved["display_name"],
+                )
+            return result
+
+        if tool != "list_projects" and args.get("project"):
+            try:
+                args["project"] = self.projects.resolve_codebase_workspace(
+                    str(args["project"])
+                )
+            except ValueError:
+                # Preserve compatibility with pre-catalog engine identifiers.
+                pass
+        return self.codebase.call(tool, args)
+
+    def call_archive(self, tool: str, arguments: dict | None = None) -> dict:
+        args = dict(arguments or {})
+        project_scoped = tool in {
+            "write_note",
+            "read_note",
+            "delete_note",
+            "edit_note",
+            "build_context",
+            "search_notes",
+            "schema_validate",
+            "schema_infer",
+            "schema_diff",
+        }
+        resolved_project = None
+        identifier = args.get("project_id") or args.get("project")
+        if identifier:
+            try:
+                resolved_project = self.projects.resolve_project(str(identifier))
+                project_id = resolved_project["project_id"]
+            except ValueError:
+                project_id = str(identifier)
+            args["project"] = project_id
+            args["project_id"] = project_id
+        elif project_scoped:
+            args["project"] = self.space
+            args["project_id"] = self.space
+            try:
+                resolved_project = self.projects.resolve_project(self.space)
+            except ValueError:
+                resolved_project = None
+        if project_scoped and resolved_project is not None:
+            project_id = resolved_project["project_id"]
+            self.projects.bind_basic_project(
+                project_id,
+                external_id=project_id,
+                name=resolved_project["display_name"],
+                path=archive_project_path(self.config, project_id),
+            )
+        return self.archive.call(tool, args)
 
     # ------------------------------------------------------------------
     # Public API
@@ -262,7 +653,16 @@ class MemoryService:
         # Dedup: exact match first (catches identical content regardless of BM25 score)
         exact = self.storage.find_exact(content, space)
         if exact is not None:
-            self.storage.log_event(space, "remember_merged", exact.id, {"reason": "exact_match"})
+            self.storage.attach_memory_source(
+                exact.id,
+                space,
+                importance=importance,
+                tags=tags,
+                meta=meta,
+            )
+            self.storage.log_event(
+                space, "remember_merged", exact.id, {"reason": "exact_match"}
+            )
             return {
                 "id": exact.id,
                 "action": "merged",
@@ -271,32 +671,9 @@ class MemoryService:
                 "similar_merged": True,
             }
 
-        # Cosine dedup: merge near-duplicates above threshold
-        if self.embedder.available and self.config.cosine_dedup_threshold > 0:
-            new_vec = self.embedder.encode(content)
-            if new_vec is not None:
-                similar_vecs = self.storage.search_vec(new_vec, space, limit=3)
-                for candidate in similar_vecs:
-                    cand_vec = self.embedder.encode(candidate.content)
-                    if cand_vec is not None:
-                        sim = self.embedder.cosine_similarity(new_vec, cand_vec)
-                        if sim >= self.config.cosine_dedup_threshold:
-                            self.storage.update_memory_content(candidate.id, content)
-                            if self.config.graph_enabled:
-                                entities = self.storage.extract_entities_from_content(content)
-                                if entities:
-                                    self.storage.link_memory_to_entities(
-                                        candidate.id,
-                                        space,
-                                        entities,
-                                    )
-                            self.storage.log_event(space, "remember_merged", candidate.id, {"reason": "cosine_similarity", "score": round(sim, 4)})
-                            return {"id": candidate.id, "action": "merged", "layer": candidate.layer, "type": candidate.memory_type, "similar_merged": True, "similarity": round(sim, 4)}
-
         # Insert new memory
         meta = dict(meta or {})
-        conflicts = self._detect_conflicts(content, tags or [], meta)
-        memory = self.storage.insert_memory(
+        memory, inserted = self.storage.insert_memory_atomic(
             content=content,
             space=space,
             layer=layer,
@@ -307,8 +684,23 @@ class MemoryService:
             meta=meta,
         )
 
+        if not inserted:
+            self.storage.log_event(
+                space,
+                "remember_merged",
+                memory.id,
+                {"reason": "exact_match_race"},
+            )
+            return {
+                "id": memory.id,
+                "action": "merged",
+                "layer": memory.layer,
+                "type": memory.memory_type,
+                "similar_merged": True,
+            }
+
         # Enqueue background embedding
-        self.embedder.enqueue(memory.id, content)
+        self._queue_embeddings(memory.id, content)
 
         # Log the event
         self.storage.log_event(space, "remember", memory.id, {"importance": importance})
@@ -318,13 +710,26 @@ class MemoryService:
             entities = self.storage.extract_entities_from_content(content)
             if entities:
                 self.storage.link_memory_to_entities(memory.id, space, entities)
-                logger.debug("Graph: linked %d entities to memory %s", len(entities), memory.id)
+                logger.debug(
+                    "Graph: linked %d entities to memory %s", len(entities), memory.id
+                )
+
+        conflicts = self._detect_conflicts(
+            content,
+            tags or [],
+            meta,
+            memory_id=memory.id,
+            importance=importance,
+        )
+        self._persist_conflicts(conflicts)
 
         # Trigger briefing refresh in background if important enough
         if importance >= 1:
             self._signal_briefing_refresh()
 
-        logger.debug("Memory stored id=%s layer=%s type=%s", memory.id, layer, memory_type)
+        logger.debug(
+            "Memory stored id=%s layer=%s type=%s", memory.id, layer, memory_type
+        )
         return {
             "id": memory.id,
             "action": "stored",
@@ -344,6 +749,7 @@ class MemoryService:
         tags: list = None,
         all_spaces: bool = False,
         min_score: float | None = None,
+        include_expired: bool = False,
     ) -> dict:
         """
         Retrieve memories matching a query using FTS, semantic search,
@@ -352,61 +758,14 @@ class MemoryService:
         started = time.perf_counter()
         if space is None:
             space = self.space
-        effective_min_score = self.config.recall_min_score if min_score is None else min_score
+        effective_min_score = (
+            self.config.recall_min_score if min_score is None else min_score
+        )
 
         candidate_limit = max(
             limit * 2,
             self.config.rerank_candidates if self.reranker.available else limit * 2,
         )
-
-        # All-spaces search: search across all known spaces using multi-space FTS
-        if all_spaces:
-            known_spaces = self.storage.list_spaces()
-            fts_results = self.storage.search_fts_multi(query, known_spaces, limit=candidate_limit)
-            mode_used = "fts"
-            final_list, rerank_applied, rerank_fallback = self._rerank_if_available(
-                query,
-                fts_results,
-                limit,
-            )
-            if rerank_applied:
-                mode_used = "fts+rerank"
-            threshold_min_score = effective_min_score if min_score is not None or rerank_applied else None
-            final_list, threshold_reason = self._filter_by_min_score(
-                final_list,
-                threshold_min_score,
-            )
-            latency_ms = round((time.perf_counter() - started) * 1000, 3)
-            self._record_recall_trace(
-                space,
-                query,
-                mode,
-                mode_used,
-                len(fts_results),
-                0,
-                len(final_list),
-                rerank_applied,
-                rerank_fallback,
-                latency_ms,
-                all_spaces=True,
-                min_score=threshold_min_score,
-                threshold_reason=threshold_reason,
-            )
-            results, conflicts = self._prepare_results(final_list, query=query)
-            return {
-                "results": results,
-                "count": len(final_list),
-                "mode": mode_used,
-                "query": query,
-                "all_spaces": True,
-                "latency_ms": latency_ms,
-                "rerank_applied": rerank_applied,
-                "rerank_fallback_reason": rerank_fallback,
-                "min_score": threshold_min_score,
-                "threshold_reason": threshold_reason,
-                "conflicts": conflicts,
-                "forget_suggestions": self._forget_suggestions(conflicts),
-            }
 
         # Quick working-memory expiry
         self.storage.expire_working_memories(space)
@@ -416,10 +775,20 @@ class MemoryService:
 
         fts_results: list = []
         vec_results: list = []
+        embedding_profile = None
+        embedding_fallback_reason = None
+        embedding_coverage = None
 
         # Full-text search
         if mode in ("hybrid", "fts"):
-            fts_results = self.storage.search_fts(query, space, limit=candidate_limit, layer=layer, tags=tags)
+            fts_results = self.storage.search_fts_global(
+                query,
+                space,
+                limit=candidate_limit,
+                layer=layer,
+                tags=tags,
+                include_expired=include_expired,
+            )
             if not fts_results:
                 fts_results = self._search_entity_fallbacks(
                     query,
@@ -427,18 +796,47 @@ class MemoryService:
                     candidate_limit,
                     layer=layer,
                     tags=tags,
+                    include_expired=include_expired,
                 )
 
         # Semantic / vector search
         if mode in ("hybrid", "semantic"):
-            vec = self.embedder.encode(query)
-            if vec is not None:
-                vec_results = self.storage.search_vec(vec, space, limit=candidate_limit)
+            encoded = self.embedder.encode_query(query)
+            if encoded is not None:
+                embedding_coverage = self.storage.profile_embedding_coverage(
+                    encoded.profile.profile_id
+                )
+                if (
+                    encoded.profile.provider != "local"
+                    and embedding_coverage < 1.0
+                ):
+                    local_encoded = self.embedder.encode_local_query(query)
+                    if local_encoded is not None:
+                        encoded = local_encoded
+                        embedding_coverage = (
+                            self.storage.profile_embedding_coverage(
+                                encoded.profile.profile_id
+                            )
+                        )
+                        embedding_fallback_reason = "external_coverage_incomplete"
+                embedding_profile = encoded.profile.profile_id
+                embedding_fallback_reason = (
+                    embedding_fallback_reason or encoded.fallback_reason
+                )
+                vec_results = self.storage.search_profile_embeddings(
+                    encoded.vector,
+                    encoded.profile.profile_id,
+                    space,
+                    limit=candidate_limit,
+                    include_expired=include_expired,
+                )
                 if layer:
                     vec_results = [r for r in vec_results if r.layer == layer]
                 if tags:
                     wanted = set(tags)
-                    vec_results = [r for r in vec_results if wanted.intersection(set(r.tags))]
+                    vec_results = [
+                        r for r in vec_results if wanted.intersection(set(r.tags))
+                    ]
 
         # Fuse results
         if fts_results and vec_results:
@@ -486,13 +884,26 @@ class MemoryService:
                 False,
                 "no_candidates",
                 latency_ms,
+                all_spaces=all_spaces,
                 min_score=effective_min_score if min_score is not None else None,
+            )
+            self._last_recall_trace.update(
+                {
+                    "embedding_profile": embedding_profile,
+                    "embedding_coverage": embedding_coverage,
+                    "embedding_fallback_reason": embedding_fallback_reason,
+                }
             )
             return {
                 "results": [],
                 "mode": mode,
                 "count": 0,
                 "query": query,
+                "all_spaces": all_spaces,
+                "include_expired": include_expired,
+                "embedding_profile": embedding_profile,
+                "embedding_coverage": embedding_coverage,
+                "embedding_fallback_reason": embedding_fallback_reason,
                 "latency_ms": latency_ms,
                 "rerank_applied": False,
                 "rerank_fallback_reason": "no_candidates",
@@ -509,7 +920,9 @@ class MemoryService:
             final_list = final_list[:limit]
         else:
             mode_used = f"{mode_used}+rerank"
-        threshold_min_score = effective_min_score if min_score is not None or rerank_applied else None
+        threshold_min_score = (
+            effective_min_score if min_score is not None or rerank_applied else None
+        )
         final_list, threshold_reason = self._filter_by_min_score(
             final_list,
             threshold_min_score,
@@ -527,8 +940,16 @@ class MemoryService:
             rerank_applied,
             rerank_fallback,
             latency_ms,
+            all_spaces=all_spaces,
             min_score=threshold_min_score,
             threshold_reason=threshold_reason,
+        )
+        self._last_recall_trace.update(
+            {
+                "embedding_profile": embedding_profile,
+                "embedding_coverage": embedding_coverage,
+                "embedding_fallback_reason": embedding_fallback_reason,
+            }
         )
         results, conflicts = self._prepare_results(final_list, query=query)
         return {
@@ -536,6 +957,11 @@ class MemoryService:
             "mode": mode_used,
             "count": len(final_list),
             "query": query,
+            "all_spaces": all_spaces,
+            "include_expired": include_expired,
+            "embedding_profile": embedding_profile,
+            "embedding_coverage": embedding_coverage,
+            "embedding_fallback_reason": embedding_fallback_reason,
             "latency_ms": latency_ms,
             "rerank_applied": rerank_applied,
             "rerank_fallback_reason": rerank_fallback,
@@ -556,9 +982,19 @@ class MemoryService:
         """List memories with optional layer and tags filter."""
         space = self.space
         self.storage.expire_working_memories(space)
-        memories = self.storage.list_memories(space, layer=layer, tags=tags, limit=limit)
+        memories = self.storage.list_memories_global(
+            space,
+            layer=layer,
+            tags=tags,
+            limit=limit,
+        )
+        results = []
+        for memory in memories:
+            item = memory.to_dict()
+            item["source_projects"] = self.storage.source_projects(memory.id)
+            results.append(item)
         return {
-            "memories": [m.to_dict() for m in memories],
+            "memories": results,
             "count": len(memories),
             "filter": {"layer": layer, "tags": tags},
         }
@@ -572,7 +1008,7 @@ class MemoryService:
         memory_type: str | None = None,
         meta: dict | None = None,
     ) -> dict:
-        """Update a memory by ID and rebuild derived indexes as needed."""
+        """Update metadata in place or create a replacement content version."""
         existing = self.storage.get_memory(memory_id)
         if existing is None:
             return {"updated": False, "id": memory_id, "error": "not found"}
@@ -589,7 +1025,11 @@ class MemoryService:
         new_content = existing.content if content is None else content
         content_changed = new_content != existing.content
         new_importance = existing.importance if importance is None else importance
-        requested_type = "auto" if memory_type is None and content_changed else (existing.memory_type if memory_type is None else memory_type)
+        requested_type = (
+            "auto"
+            if memory_type is None and content_changed
+            else (existing.memory_type if memory_type is None else memory_type)
+        )
         new_type = (
             _detect_memory_type(new_content, new_importance)
             if requested_type == "auto"
@@ -625,32 +1065,52 @@ class MemoryService:
                     ],
                 }
 
-        updated = self.storage.update_memory(
-            memory_id,
-            content=new_content,
-            layer=new_layer,
-            memory_type=new_type,
-            importance=new_importance,
-            tags=new_tags,
-            meta=new_meta,
-        )
+        if content_changed:
+            updated = self.storage.supersede_memory(
+                memory_id,
+                content=new_content,
+                layer=new_layer,
+                memory_type=new_type,
+                importance=new_importance,
+                tags=new_tags,
+                meta=new_meta,
+            )
+        else:
+            updated = self.storage.update_memory(
+                memory_id,
+                layer=new_layer,
+                memory_type=new_type,
+                importance=new_importance,
+                tags=new_tags,
+                meta=new_meta,
+            )
         if updated is None:
             return {"updated": False, "id": memory_id, "error": "not found"}
 
         if content_changed:
-            self.embedder.enqueue(updated.id, updated.content)
+            self._queue_embeddings(updated.id, updated.content)
             if self.config.graph_enabled:
                 entities = self.storage.extract_entities_from_content(updated.content)
                 if entities:
-                    self.storage.link_memory_to_entities(updated.id, updated.space, entities)
+                    self.storage.link_memory_to_entities(
+                        updated.id, updated.space, entities
+                    )
 
-        conflicts = self._detect_conflicts(updated.content, updated.tags, updated.meta)
+        conflicts = self._detect_conflicts(
+            updated.content,
+            updated.tags,
+            updated.meta,
+            memory_id=updated.id,
+            importance=updated.importance,
+        )
+        self._persist_conflicts(conflicts)
         self.storage.log_event(
             updated.space,
-            "memory_updated",
+            "memory_superseded" if updated.id != memory_id else "memory_updated",
             updated.id,
             {
                 "content_changed": content_changed,
+                "previous_id": memory_id if updated.id != memory_id else None,
                 "importance": updated.importance,
                 "layer": updated.layer,
                 "type": updated.memory_type,
@@ -660,7 +1120,8 @@ class MemoryService:
         return {
             "updated": True,
             "id": updated.id,
-            "action": "updated",
+            "action": "superseded" if updated.id != memory_id else "updated",
+            "supersedes_id": memory_id if updated.id != memory_id else None,
             "layer": updated.layer,
             "type": updated.memory_type,
             "importance": updated.importance,
@@ -705,12 +1166,15 @@ class MemoryService:
                 data["context_summary"] = summary
         data["fast"] = fast
         data["warnings"] = [
-            m for m in memories_for_summary
+            m
+            for m in memories_for_summary
             if (m.get("memory_type") or m.get("type")) == TYPE_BUG
         ][:5]
         data["decisions"] = [
-            m for m in memories_for_summary
-            if m.get("layer") == LAYER_ARCHIVE or (m.get("memory_type") or m.get("type")) == TYPE_DECISION
+            m
+            for m in memories_for_summary
+            if m.get("layer") == LAYER_ARCHIVE
+            or (m.get("memory_type") or m.get("type")) == TYPE_DECISION
         ][:5]
         return data
 
@@ -737,15 +1201,17 @@ class MemoryService:
         stats = self.storage.get_stats(self.space)
         graph_stats = self.storage.get_graph_stats(self.space)
         total = stats.get("total_count", 0) or 0
-        embeddings = self.storage.count_embeddings(self.space)
+        embeddings, embedding_coverage = self._local_embedding_status()
         fts_entries = self.storage.count_fts_entries(self.space)
-        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
         fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
         try:
             import jieba  # noqa: F401
+
             jieba_available = True
         except ImportError:
             jieba_available = False
+        codebase_meta = self.codebase.metadata()
+        archive_meta = self.archive.metadata()
         return {
             "space": self.space,
             "embedding_available": self.embedder.available,
@@ -772,13 +1238,27 @@ class MemoryService:
             "briefing_important": self.config.briefing_important,
             "api_timeout_seconds": self.config.api_timeout_seconds,
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "embedding_profiles": self._embedding_profiles_status(),
+            "embedding_selected_profile": self.embedder.last_selected_profile,
+            "embedding_fallback_reason": self.embedder.last_fallback_reason,
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
-            "codebase_engine_available": self.codebase.executable is not None,
-            "codebase_engine_path": self.codebase.executable,
-            "archive_engine_available": self.archive.executable is not None,
-            "archive_engine_path": self.archive.executable,
+            "codebase_engine_available": True,
+            "codebase_engine": "evermind-code-graph",
+            "codebase_engine_path": codebase_meta["binary_path"],
+            "codebase_backend": codebase_meta["active_backend"],
+            "codebase_source_integrated": codebase_meta["source_integrated"],
+            "codebase_binary_available": codebase_meta["binary_available"],
+            "codebase_source_path": codebase_meta["source_path"],
+            "archive_engine_available": True,
+            "archive_engine": "evermind-archive",
+            "archive_backend": archive_meta["backend"],
+            "archive_source_integrated": archive_meta["source_integrated"],
+            "archive_source_path": archive_meta["source_path"],
+            "archive_license": archive_meta["license"],
+            "archive_engine_path": None,
             "archive_root": str(self.config.archive_root),
+            "provider_boundary": local_provider_boundary(),
             "rerank_last_applied": self.reranker.last_applied,
             "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
             "rerank_last_latency_ms": self.reranker.last_latency_ms,
@@ -795,27 +1275,57 @@ class MemoryService:
         space = self.space
         memories = self.storage.export_memories(space, layer=layer)
         if format == "json":
-            return {"memories": [m.to_dict() for m in memories], "count": len(memories), "space": space, "format": "json"}
+            return {
+                "memories": [m.to_dict() for m in memories],
+                "count": len(memories),
+                "space": space,
+                "format": "json",
+            }
         # Markdown
         from datetime import datetime, timezone
+
         lines = [f"# EverMind Export — {space}", "", f"*{len(memories)} memories*", ""]
         layers_map = {}
         for m in memories:
             layers_map.setdefault(m.layer, []).append(m)
-        for lyr, label in [("archive", "## Archive"), ("semantic", "## Semantic"), ("procedural", "## Procedural"), ("episodic", "## Episodic"), ("working", "## Working")]:
+        for lyr, label in [
+            ("archive", "## Archive"),
+            ("semantic", "## Semantic"),
+            ("procedural", "## Procedural"),
+            ("episodic", "## Episodic"),
+            ("working", "## Working"),
+        ]:
             if lyr in layers_map:
                 lines += [label, ""]
                 for m in layers_map[lyr]:
-                    dt = datetime.fromtimestamp(m.created_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+                    dt = datetime.fromtimestamp(
+                        m.created_at / 1000, tz=timezone.utc
+                    ).strftime("%Y-%m-%d")
                     tags_str = f" `{'` `'.join(m.tags)}`" if m.tags else ""
-                    lines += [f"- **[{m.memory_type}]**{tags_str} *{dt}*", f"  {m.content}", ""]
-        return {"content": "\n".join(lines), "count": len(memories), "space": space, "format": "markdown"}
+                    lines += [
+                        f"- **[{m.memory_type}]**{tags_str} *{dt}*",
+                        f"  {m.content}",
+                        "",
+                    ]
+        return {
+            "content": "\n".join(lines),
+            "count": len(memories),
+            "space": space,
+            "format": "markdown",
+        }
 
     async def compact(self, older_than_days: int = 30) -> dict:
         """Compact old episodic memories into a summary."""
-        result = self.storage.compact_episodic(self.space, older_than_days=older_than_days)
+        result = self.storage.compact_episodic(
+            self.space, older_than_days=older_than_days
+        )
         if result["summarized"] > 0:
-            self.storage.log_event(self.space, "compact", result["created_id"], {"summarized_count": result["summarized"]})
+            self.storage.log_event(
+                self.space,
+                "compact",
+                result["created_id"],
+                {"summarized_count": result["summarized"]},
+            )
             self._signal_briefing_refresh()
         return result
 
@@ -853,13 +1363,14 @@ class MemoryService:
         stats = self.storage.get_stats(self.space)
         graph_stats = self.storage.get_graph_stats(self.space)
         total = stats.get("total_count", 0) or 0
-        embeddings = self.storage.count_embeddings(self.space)
         fts_entries = self.storage.count_fts_entries(self.space)
         duplicates = self.storage.count_exact_duplicates(self.space)
         expired = self.storage.count_expired_working(self.space)
-        embedding_coverage = round((embeddings / total) * 100, 2) if total else 100.0
+        _, embedding_coverage = self._local_embedding_status()
         fts_coverage = round((fts_entries / total) * 100, 2) if total else 100.0
         duplicate_rate = round((duplicates / total) * 100, 2) if total else 0.0
+        codebase_meta = self.codebase.metadata()
+        archive_meta = self.archive.metadata()
         return {
             "space": self.space,
             "total_count": total,
@@ -876,11 +1387,26 @@ class MemoryService:
             "duplicate_rate_percent": duplicate_rate,
             "api_timeout_seconds": self.config.api_timeout_seconds,
             "embedding_api_metrics": self.embedder.metrics_snapshot(),
+            "embedding_profiles": self._embedding_profiles_status(),
+            "embedding_selected_profile": self.embedder.last_selected_profile,
+            "embedding_fallback_reason": self.embedder.last_fallback_reason,
             "rerank_api_metrics": self.reranker.metrics_snapshot(),
             "llm_api_metrics": self.llm.metrics_snapshot(),
-            "codebase_engine_available": self.codebase.executable is not None,
-            "archive_engine_available": self.archive.executable is not None,
+            "codebase_engine_available": True,
+            "codebase_engine": "evermind-code-graph",
+            "codebase_engine_path": codebase_meta["binary_path"],
+            "codebase_backend": codebase_meta["active_backend"],
+            "codebase_source_integrated": codebase_meta["source_integrated"],
+            "codebase_binary_available": codebase_meta["binary_available"],
+            "codebase_source_path": codebase_meta["source_path"],
+            "archive_engine_available": True,
+            "archive_engine": "evermind-archive",
+            "archive_backend": archive_meta["backend"],
+            "archive_source_integrated": archive_meta["source_integrated"],
+            "archive_source_path": archive_meta["source_path"],
+            "archive_license": archive_meta["license"],
             "archive_root": str(self.config.archive_root),
+            "provider_boundary": local_provider_boundary(),
             "rerank_last_applied": self.reranker.last_applied,
             "rerank_last_fallback_reason": self.reranker.last_fallback_reason,
             "rerank_last_latency_ms": self.reranker.last_latency_ms,
@@ -895,29 +1421,74 @@ class MemoryService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _local_embedding_status(self) -> tuple[int, float]:
+        profile_id = self.embedder.local_profile.profile_id
+        ready = self.storage.count_profile_embeddings(profile_id)
+        coverage = round(
+            self.storage.profile_embedding_coverage(profile_id) * 100,
+            2,
+        )
+        return ready, coverage
+
+    def _embedding_profiles_status(self) -> list[dict]:
+        return [
+            {
+                "profile_id": profile.profile_id,
+                "provider": profile.provider,
+                "model": profile.model,
+                "version": profile.version,
+                "dimensions": profile.dimensions,
+                "coverage": round(
+                    self.storage.profile_embedding_coverage(profile.profile_id), 4
+                ),
+                "ready": self.storage.count_profile_embeddings(profile.profile_id),
+            }
+            for profile in self.embedder.profiles
+        ]
+
     def _briefing_worker_loop(self) -> None:
         """Single background thread that refreshes briefing cache on demand."""
-        while True:
+        while not self._closing.is_set():
             triggered = self._briefing_event.wait(timeout=120)
             self._briefing_event.clear()
-            if triggered:
+            if triggered and not self._closing.is_set():
                 self._refresh_briefing_bg()
 
     def _signal_briefing_refresh(self) -> None:
         """Signal the briefing worker to refresh (non-blocking)."""
-        self._briefing_event.set()
+        if not self._closing.is_set():
+            self._briefing_event.set()
 
-    def _on_embedding_ready(self, memory_id: str, vec: list[float]) -> None:
+    def _queue_embeddings(self, memory_id: str, content: str) -> None:
+        for profile in self.embedder.profiles:
+            self.storage.mark_embedding_pending(memory_id, profile.profile_id)
+        self.embedder.enqueue(memory_id, content)
+
+    def _on_embedding_ready(
+        self,
+        memory_id: str,
+        profile: EmbeddingProfile,
+        vec: list[float],
+    ) -> None:
         """
         Callback invoked by EmbeddingManager when a background embedding
         finishes. Writes the vector to storage and refreshes the briefing cache.
         """
-        rowid = self.storage.get_memory_rowid(memory_id)
-        if rowid:
-            self.storage.update_embedding(rowid, vec)
-            logger.debug("Embedding stored for memory_id=%s rowid=%s", memory_id, rowid)
+        if self._closing.is_set():
+            return
+        if self.storage.get_memory(memory_id) is not None:
+            self.storage.store_profile_embedding(
+                memory_id, profile.profile_id, vec
+            )
+            logger.debug(
+                "Embedding stored for memory_id=%s profile=%s",
+                memory_id,
+                profile.profile_id,
+            )
         else:
-            logger.debug("Memory %s deleted before embedding callback finished", memory_id)
+            logger.debug(
+                "Memory %s deleted before embedding callback finished", memory_id
+            )
 
         self.storage.refresh_briefing_cache(
             self.space,
@@ -998,20 +1569,30 @@ class MemoryService:
         if not candidates:
             return [], False, "no_candidates"
         if not self.reranker.available:
-            return self._prioritize_verified_conflicts(candidates, query)[:limit], False, "unavailable"
+            return (
+                self._prioritize_verified_conflicts(candidates, query)[:limit],
+                False,
+                "unavailable",
+            )
         top_k = min(len(candidates), max(limit, limit + 5))
         reranked = self.reranker.rerank(query, candidates, top_k=top_k)
         reranked = self._prioritize_verified_conflicts(reranked, query)
         if getattr(self.reranker, "last_applied", True):
             return reranked[:limit], True, None
-        return reranked[:limit], False, getattr(
-            self.reranker,
-            "last_fallback_reason",
-            "unknown",
+        return (
+            reranked[:limit],
+            False,
+            getattr(
+                self.reranker,
+                "last_fallback_reason",
+                "unknown",
+            ),
         )
 
     @staticmethod
-    def _filter_by_min_score(memories: list, min_score: float | None) -> tuple[list, str | None]:
+    def _filter_by_min_score(
+        memories: list, min_score: float | None
+    ) -> tuple[list, str | None]:
         if min_score is None or min_score <= 0:
             return memories, None
         filtered = [memory for memory in memories if memory.score >= min_score]
@@ -1029,29 +1610,52 @@ class MemoryService:
         *,
         layer: str | None = None,
         tags: list | None = None,
+        include_expired: bool = False,
     ) -> list:
         candidates = []
         seen: set[str] = set()
-        tokens = [token for token in re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", query) if len(token) >= 4]
+        tokens = [
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_.-]{2,}", query)
+            if len(token) >= 4
+        ]
         for token in tokens:
-            for memory in self.storage.search_fts(token, space, limit=limit, layer=layer, tags=tags):
+            for memory in self.storage.search_fts_global(
+                token,
+                space,
+                limit=limit,
+                layer=layer,
+                tags=tags,
+                include_expired=include_expired,
+            ):
                 if memory.id in seen:
                     continue
                 seen.add(memory.id)
                 candidates.append(memory)
         return candidates[:limit]
 
-    def _prepare_results(self, memories: list, *, query: str) -> tuple[list[dict], list[dict]]:
+    def _prepare_results(
+        self, memories: list, *, query: str
+    ) -> tuple[list[dict], list[dict]]:
         ordered = self._prioritize_verified_conflicts(memories, query)
         results = [memory.to_dict() for memory in ordered]
         for result, memory in zip(results, ordered, strict=False):
             result["verified"] = self._is_verified(memory.to_dict())
             result["conflict_role"] = self._fact_polarity(memory.content)
+            claim = _value_claim(memory.content)
+            result["claim_key"] = claim[0] if claim else None
+            result["claim_value"] = claim[1] if claim else None
+            result["source_projects"] = self.storage.source_projects(memory.id)
         conflicts = self._detect_conflicts_in_dicts(results, query=query)
         return results, conflicts
 
     def _prioritize_verified_conflicts(self, memories: list, query: str) -> list:
-        conflict_entities = self._conflict_entities([m.to_dict() for m in memories], query)
+        conflict_entities = self._conflict_entities(
+            [m.to_dict() for m in memories], query
+        )
+        value_conflict_keys = _value_conflict_keys(
+            [m.to_dict() for m in memories]
+        )
 
         def priority(memory) -> tuple:
             data = memory.to_dict()
@@ -1059,9 +1663,14 @@ class MemoryService:
             verified = self._is_verified(data)
             polarity = self._fact_polarity(data.get("content", ""))
             verified_negative = verified and polarity == "negative" and entity_hit
+            claim = _value_claim(data.get("content", ""))
+            value_conflict = bool(claim and claim[0] in value_conflict_keys)
             return (
                 1 if verified_negative else 0,
+                1 if verified and value_conflict else 0,
                 1 if verified and entity_hit else 0,
+                1 if value_conflict else 0,
+                memory.updated_at if value_conflict else 0,
                 memory.importance,
                 memory.score,
                 memory.updated_at,
@@ -1069,28 +1678,49 @@ class MemoryService:
 
         return sorted(memories, key=priority, reverse=True)
 
-    def _detect_conflicts(self, content: str, tags: list, meta: dict) -> list[dict]:
+    def _detect_conflicts(
+        self,
+        content: str,
+        tags: list,
+        meta: dict,
+        *,
+        memory_id: str | None = None,
+        importance: int = 0,
+    ) -> list[dict]:
         entities = _entities(content)
         polarity = self._fact_polarity(content)
-        if not entities or polarity == "unknown":
+        value_claim = _value_claim(content)
+        if (not entities or polarity == "unknown") and value_claim is None:
             return []
-        rows = []
-        for entity in entities:
-            for item in self.storage.search_graph(self.space, entity, limit=10):
-                memory = item.get("memory") if isinstance(item, dict) else None
-                if isinstance(memory, dict):
-                    rows.append(memory)
+        rows_by_key: dict[str, dict] = {}
+        if polarity != "unknown":
+            for entity in entities:
+                for item in self.storage.search_graph(self.space, entity, limit=10):
+                    memory = item.get("memory") if isinstance(item, dict) else None
+                    if isinstance(memory, dict) and memory.get("id") != memory_id:
+                        key = str(memory.get("id") or memory.get("content"))
+                        rows_by_key[key] = memory
+        if value_claim is not None:
+            for candidate in self.storage.find_active_memories_containing(
+                value_claim[0], limit=20
+            ):
+                if candidate.id != memory_id:
+                    rows_by_key[candidate.id] = candidate.to_dict()
         new_memory = {
-            "id": None,
+            "id": memory_id,
             "content": content,
             "tags": tags,
             "meta": meta,
-            "importance": 0,
+            "importance": importance,
             "score": 0,
         }
-        return self._detect_conflicts_in_dicts([new_memory, *rows], query=content)
+        return self._detect_conflicts_in_dicts(
+            [new_memory, *rows_by_key.values()], query=content
+        )
 
-    def _detect_conflicts_in_dicts(self, memories: list[dict], *, query: str) -> list[dict]:
+    def _detect_conflicts_in_dicts(
+        self, memories: list[dict], *, query: str
+    ) -> list[dict]:
         conflicts = []
         seen: set[tuple[str, str]] = set()
         for entity in self._conflict_entities(memories, query):
@@ -1107,21 +1737,83 @@ class MemoryService:
                     positive.append(memory)
             if not negative or not positive:
                 continue
-            pair_key = (entity, ",".join(sorted(str(m.get("id")) for m in negative + positive)))
+            pair_key = (
+                entity,
+                ",".join(sorted(str(m.get("id")) for m in negative + positive)),
+            )
             if pair_key in seen:
                 continue
             seen.add(pair_key)
+            storage_claim_key = f"code:{entity}"
             conflicts.append(
                 {
+                    "conflict_id": _conflict_id(storage_claim_key),
+                    "claim_key": entity,
                     "entity": entity,
                     "type": "code_fact_contradiction",
                     "negative": [_conflict_item(item) for item in negative],
                     "positive": [_conflict_item(item) for item in positive],
-                    "verified_negative": any(self._is_verified(item) for item in negative),
+                    "verified_negative": any(
+                        self._is_verified(item) for item in negative
+                    ),
                     "suggestion": "Prefer codebase-verified negative facts; review and forget stale positive memories.",
                 }
             )
+
+        value_claims: dict[str, dict[str, list[dict]]] = {}
+        for memory in memories:
+            claim = _value_claim(memory.get("content", ""))
+            if claim is None:
+                continue
+            key, value = claim
+            value_claims.setdefault(key, {}).setdefault(value, []).append(memory)
+        for key in sorted(value_claims):
+            by_value = value_claims[key]
+            if len(by_value) < 2:
+                continue
+            storage_claim_key = f"value:{key}"
+            conflicts.append(
+                {
+                    "conflict_id": _conflict_id(storage_claim_key),
+                    "claim_key": key,
+                    "type": "value_mismatch",
+                    "values": [
+                        {
+                            "value": value,
+                            "claims": [_conflict_item(item) for item in by_value[value]],
+                        }
+                        for value in sorted(by_value)
+                    ],
+                    "verified_values": [
+                        value
+                        for value in sorted(by_value)
+                        if any(self._is_verified(item) for item in by_value[value])
+                    ],
+                    "unresolved": True,
+                    "suggestion": "Prefer verified current evidence; review conflicting values before superseding either claim.",
+                }
+            )
         return conflicts
+
+    def _persist_conflicts(self, conflicts: list[dict]) -> None:
+        for conflict in conflicts:
+            if conflict.get("type") == "value_mismatch":
+                members = [
+                    claim.get("id")
+                    for value in conflict.get("values", [])
+                    for claim in value.get("claims", [])
+                ]
+                claim_key = f"value:{conflict['claim_key']}"
+            else:
+                members = [
+                    item.get("id")
+                    for group in ("negative", "positive")
+                    for item in conflict.get(group, [])
+                ]
+                claim_key = f"code:{conflict['claim_key']}"
+            self.storage.record_memory_conflict(
+                conflict["conflict_id"], claim_key, members
+            )
 
     def _conflict_entities(self, memories: list[dict], query: str) -> set[str]:
         entity_to_polarities: dict[str, set[str]] = {}
@@ -1179,7 +1871,10 @@ class MemoryService:
 
 
 def _entities(content: str) -> set[str]:
-    return {match.group(0).replace("\\", "/") for match in ENTITY_PATTERN.finditer(content or "")}
+    return {
+        match.group(0).replace("\\", "/")
+        for match in ENTITY_PATTERN.finditer(content or "")
+    }
 
 
 def _conflict_item(memory: dict) -> dict:

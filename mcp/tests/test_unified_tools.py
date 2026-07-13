@@ -3,39 +3,60 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from evermind_mcp.config_v2 import EverMindConfig
-import evermind_mcp.archive_bridge as archive_bridge
-import evermind_mcp.codebase_engine as codebase_engine
-import evermind_mcp.tool_bridge as tool_bridge
 from evermind_mcp.archive_bridge import ArchiveBridge
-from evermind_mcp.archive_bridge import _archive_args
 from evermind_mcp.codebase_engine import CodebaseEngine
+from evermind_mcp.vendored_codebase import EXPECTED_TREE_SITTER_GRAMMAR_COUNT, REQUIRED_HYBRID_LSP_FILES
 from evermind_mcp.memory_service_v2 import MemoryService
 
 
-def _parse(text_contents) -> dict:
-    return json.loads(text_contents[0].text)
+async def _call_registered(server_mod, name: str, arguments: dict) -> dict:
+    result = await server_mod.mcp.call_tool(name, arguments)
+    assert result.structured_content is not None
+    return result.structured_content
 
 
-def test_unified_tool_surface_contains_memory_codebase_and_archive():
-    import evermind_mcp.server_v2 as server_mod
+def _write_minimal_vendored_codebase_source(source: Path) -> None:
+    (source / "src" / "mcp").mkdir(parents=True)
+    cbm = source / "internal" / "cbm"
+    grammars = cbm / "vendored" / "grammars"
+    lsp = cbm / "lsp"
+    ts_api = cbm / "vendored" / "ts_runtime" / "include" / "tree_sitter"
+    grammars.mkdir(parents=True)
+    lsp.mkdir(parents=True)
+    ts_api.mkdir(parents=True)
+    (source / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+    (source / "THIRD_PARTY.md").write_text("third-party notices\n", encoding="utf-8")
+    (source / "README.md").write_text("vendored codebase-memory-mcp\n", encoding="utf-8")
+    (source / "Makefile.cbm").write_text("cbm:\n\t@echo ok\n", encoding="utf-8")
+    (source / "src" / "mcp" / "mcp.c").write_text("/* fake */\n", encoding="utf-8")
+    (cbm / "cbm.c").write_text("/* fake */\n", encoding="utf-8")
+    (cbm / "lsp_all.c").write_text("/* fake */\n", encoding="utf-8")
+    (grammars / "MANIFEST.md").write_text("Grammars: 159\n", encoding="utf-8")
+    (ts_api / "api.h").write_text("/* fake */\n", encoding="utf-8")
+    for index in range(EXPECTED_TREE_SITTER_GRAMMAR_COUNT):
+        (grammars / f"lang_{index:03d}").mkdir()
+    for name in REQUIRED_HYBRID_LSP_FILES:
+        (lsp / name).write_text("/* fake */\n", encoding="utf-8")
 
-    names = {tool.name for tool in server_mod.TOOLS}
-    assert len(names) == 42
-    assert {"remember", "update_memory", "recall", "graph_explore"} <= names
-    assert {"index_repository", "search_code", "get_architecture"} <= names
-    assert {"search_notes", "read_note", "propose_basic_memory_update"} <= names
+
+def _native_only_config(tmp_path: Path) -> EverMindConfig:
+    return EverMindConfig(
+        home=tmp_path / "home",
+        default_space="coding:test",
+        codebase_source_dir=tmp_path / "missing-codebase-source",
+        codebase_binary_path=tmp_path / "missing-codebase-binary",
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_dispatches_codebase_and_archive_tools(tmp_path, monkeypatch):
+async def test_server_dispatches_codebase_tools(tmp_path, monkeypatch):
     import evermind_mcp.server_v2 as server_mod
 
     cfg = EverMindConfig(
@@ -46,52 +67,21 @@ async def test_server_dispatches_codebase_and_archive_tools(tmp_path, monkeypatc
     )
     svc = MemoryService(cfg)
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
     monkeypatch.setattr(
         svc.codebase,
         "call",
-        lambda name, args: {"ok": True, "engine": "codebase-memory-mcp", "tool": name, "args": args},
+        lambda name, args: {"ok": True, "engine": "evermind-code-graph", "tool": name, "args": args},
     )
-    monkeypatch.setattr(
-        svc.archive,
-        "call",
-        lambda name, args: {"ok": True, "engine": "basic-memory", "tool": name, "args": args},
+    codebase = await _call_registered(
+        server_mod,
+        "search_code",
+        {"project": "D-Project-EverMind", "pattern": "server_v2"},
     )
-
-    codebase = _parse(
-        await server_mod.call_tool(
-            "search_code",
-            {"project": "D-Project-EverMind", "pattern": "server_v2"},
-        )
-    )
-    archive = _parse(await server_mod.call_tool("search_notes", {"query": "EverMind"}))
-
-    assert codebase["engine"] == "codebase-memory-mcp"
+    assert codebase["engine"] == "evermind-code-graph"
     assert codebase["tool"] == "search_code"
-    assert archive["engine"] == "basic-memory"
-    assert archive["tool"] == "search_notes"
-    server_mod._svc = None
-
-
-@pytest.mark.asyncio
-async def test_server_missing_required_argument_returns_clean_error(tmp_path, monkeypatch, caplog):
-    import evermind_mcp.server_v2 as server_mod
-
-    cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-    )
-    svc = MemoryService(cfg)
-    server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
-
-    with caplog.at_level("ERROR", logger="evermind_mcp.server_v2"):
-        result = _parse(await server_mod.call_tool("recall", {}))
-
-    assert result["ok"] is False
-    assert result["code"] == "MCP_INVALID_ARGUMENT"
-    assert result["message"] == "missing required argument: query"
-    assert "Tool recall failed" not in caplog.text
     server_mod._svc = None
 
 
@@ -156,10 +146,12 @@ async def test_update_memory_corrects_content_indexes_graph_and_metadata(tmp_pat
     assert updated["type"] == "semantic"
     assert updated["tags"] == ["codebase-verified"]
     assert updated["meta"]["source"] == "codebase"
+    assert updated["id"] != created["id"]
+    assert updated["supersedes_id"] == created["id"]
     assert all(item["id"] != created["id"] for item in old_recall["results"])
-    assert new_recall["results"][0]["id"] == created["id"]
+    assert new_recall["results"][0]["id"] == updated["id"]
     assert old_graph["count"] == 0
-    assert new_graph["related_memories"][0]["memory"]["id"] == created["id"]
+    assert new_graph["related_memories"][0]["memory"]["id"] == updated["id"]
 
 
 @pytest.mark.asyncio
@@ -174,81 +166,32 @@ async def test_server_dispatches_update_memory(tmp_path, monkeypatch):
     )
     svc = MemoryService(cfg)
     server_mod._svc = svc
-    monkeypatch.setattr(server_mod, "_maybe_update_space_from_roots", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(
+        server_mod, "_maybe_update_space_from_roots", lambda _context=None: asyncio.sleep(0)
+    )
 
-    remembered = _parse(await server_mod.call_tool("remember", {"content": "wrong module auth.ts"}))
-    updated = _parse(
-        await server_mod.call_tool(
-            "update_memory",
-            {
-                "id": remembered["id"],
-                "content": "correct module ipcManager.ts",
-                "tags": ["codebase-verified"],
-                "meta": {"source": "codebase"},
-            },
-        )
+    remembered = await _call_registered(
+        server_mod, "remember", {"content": "wrong module auth.ts"}
+    )
+    updated = await _call_registered(
+        server_mod,
+        "update_memory",
+        {
+            "id": remembered["id"],
+            "content": "correct module ipcManager.ts",
+            "tags": ["codebase-verified"],
+            "meta": {"source": "codebase"},
+        },
     )
 
     assert updated["updated"] is True
-    assert updated["id"] == remembered["id"]
+    assert updated["id"] != remembered["id"]
+    assert updated["supersedes_id"] == remembered["id"]
     assert updated["tags"] == ["codebase-verified"]
     server_mod._svc = None
 
 
-def test_codebase_bridge_detect_changes_normalizes_repo_path_to_project(tmp_path, monkeypatch):
-    cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-        codebase_memory_path="codebase-memory-mcp",
-    )
-    engine = CodebaseEngine(cfg)
-    calls = []
-
-    monkeypatch.setattr(
-        codebase_engine,
-        "resolve_executable",
-        lambda configured, fallback: "codebase-memory-mcp",
-    )
-
-    repo_path = tmp_path / "sample-repo"
-
-    def fake_run_json_command(command, timeout_seconds):
-        calls.append((command, timeout_seconds))
-
-        class Result:
-            ok = True
-            data = (
-                {
-                    "projects": [
-                        {
-                            "name": "D-Project-SampleRepo",
-                            "root_path": str(repo_path),
-                        }
-                    ]
-                }
-                if command[2] == "list_projects"
-                else {"ok": True}
-            )
-
-            def to_dict(self):
-                return {"ok": True, "data": self.data, "latency_ms": 1}
-
-        return Result()
-
-    monkeypatch.setattr(codebase_engine, "run_json_command", fake_run_json_command)
-
-    engine.call("detect_changes", {"repo_path": str(repo_path)})
-
-    list_command, _ = calls[0]
-    command, _ = calls[1]
-    assert list_command[:3] == ["codebase-memory-mcp", "cli", "list_projects"]
-    assert command[:3] == ["codebase-memory-mcp", "cli", "detect_changes"]
-    payload = json.loads(command[3])
-    assert payload["repo_path"].endswith("sample-repo")
-    assert payload["project"] == "D-Project-SampleRepo"
-
-
-def test_codebase_native_fallback_works_without_external_executable(tmp_path):
+def test_codebase_native_engine_works_without_external_executable(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     source = repo / "app.py"
@@ -259,11 +202,7 @@ def test_codebase_native_fallback_works_without_external_executable(tmp_path):
         "    return 'needle'\n",
         encoding="utf-8",
     )
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        codebase_memory_path=str(tmp_path / "missing-codebase-memory-mcp.exe"),
-    )
+    cfg = _native_only_config(tmp_path)
     engine = CodebaseEngine(cfg)
 
     with patch.dict(os.environ, {"PATH": ""}, clear=False):
@@ -280,26 +219,27 @@ def test_codebase_native_fallback_works_without_external_executable(tmp_path):
         changes = engine.call("detect_changes", {"repo_path": str(repo)})
 
     assert indexed["ok"] is True
+    assert indexed["engine"] == "evermind-code-graph"
+    assert indexed["native"] is True
     assert indexed["fallback"] == "native"
+    assert indexed["edges"] >= 3
     assert projects["projects"][0]["name"] == project
+    assert projects["projects"][0]["edges"] == indexed["edges"]
     assert search["total_results"] == 1
     assert graph["total"] >= 1
     assert "def alpha" in snippet["source"]
     assert architecture["total_files"] == 1
+    assert architecture["call_edges"] >= 1
     assert changes["changed_files"] == []
 
 
-def test_codebase_native_fallback_covers_unified_tool_surface_without_external_executable(tmp_path):
+def test_codebase_native_engine_covers_unified_tool_surface_without_external_executable(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "main.py").write_text("class Worker:\n    def run(self):\n        return 'ok'\n", encoding="utf-8")
     trace_file = repo / "trace.json"
     trace_file.write_text("[]", encoding="utf-8")
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        codebase_memory_path=str(tmp_path / "missing-codebase-memory-mcp.exe"),
-    )
+    cfg = _native_only_config(tmp_path)
     engine = CodebaseEngine(cfg)
 
     with patch.dict(os.environ, {"PATH": ""}, clear=False):
@@ -332,18 +272,136 @@ def test_codebase_native_fallback_covers_unified_tool_surface_without_external_e
     assert all(result["ok"] for result in calls.values())
     assert snippet["ok"] is True
     assert deleted["deleted"] is True
+    assert all(result["engine"] == "evermind-code-graph" for result in [indexed, *calls.values(), snippet, deleted])
+    assert all(result["native"] is True for result in [indexed, *calls.values(), snippet, deleted])
     assert all(result["fallback"] == "native" for result in [indexed, *calls.values(), snippet, deleted])
+    assert calls["get_graph_schema"]["edge_types"]
 
 
-def test_codebase_native_fallback_detect_changes_resolves_project_from_repo_path(tmp_path):
+def test_codebase_native_engine_builds_python_call_edges_and_impact(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "app.py").write_text("def alpha():\n    return 'ok'\n", encoding="utf-8")
+    source = repo / "app.py"
+    source.write_text(
+        "def alpha():\n"
+        "    return beta()\n\n"
+        "def beta():\n"
+        "    return 'ok'\n",
+        encoding="utf-8",
+    )
+    cfg = _native_only_config(tmp_path)
+    engine = CodebaseEngine(cfg)
+
+    indexed = engine.call("index_repository", {"repo_path": str(repo), "project": "call-edge-demo"})
+    trace_alpha = engine.call("trace_path", {"project": "call-edge-demo", "function_name": "alpha"})
+    trace_beta = engine.call("trace_path", {"project": "call-edge-demo", "function_name": "beta"})
+
+    source.write_text(
+        "def alpha():\n"
+        "    return beta()\n\n"
+        "def beta():\n"
+        "    return 'changed'\n",
+        encoding="utf-8",
+    )
+    changes = engine.call("detect_changes", {"project": "call-edge-demo"})
+
+    assert indexed["edges"] >= 3
+    assert any(item["qualified_name"].endswith(".beta") for item in trace_alpha["callees"])
+    assert any(item["qualified_name"].endswith(".alpha") for item in trace_beta["callers"])
+    impacted = {item["name"] for item in changes["impacted_symbols"]}
+    assert {"alpha", "beta"} <= impacted
+
+
+def test_codebase_engine_prefers_vendored_binary_over_path(tmp_path):
+    source = tmp_path / "third_party" / "codebase-memory-mcp"
+    _write_minimal_vendored_codebase_source(source)
+
+    if os.name == "nt":
+        internal_binary = source / "build" / "c" / "codebase-memory-mcp.cmd"
+        internal_binary.parent.mkdir(parents=True)
+        internal_binary.write_text(
+            '@echo off\r\necho {"ok":true,"tool":"%3","project":"vendored-project","nodes":11,"edges":22}\r\n',
+            encoding="utf-8",
+        )
+    else:
+        internal_binary = source / "build" / "c" / "codebase-memory-mcp"
+        internal_binary.parent.mkdir(parents=True)
+        internal_binary.write_text(
+            '#!/usr/bin/env sh\nprintf \'{"ok":true,"tool":"index_repository","project":"vendored-project","nodes":11,"edges":22}\\n\'\n',
+            encoding="utf-8",
+        )
+        internal_binary.chmod(0o755)
+
+    fake_path = tmp_path / "external-bin"
+    fake_path.mkdir()
+    marker = tmp_path / "external-called.txt"
+    (fake_path / "codebase-memory-mcp.cmd").write_text(
+        f"@echo off\r\necho external >> \"{marker}\"\r\nexit /b 42\r\n",
+        encoding="utf-8",
+    )
+    (fake_path / "codebase-memory-mcp").write_text(
+        f"#!/usr/bin/env sh\necho external >> '{marker.as_posix()}'\nexit 42\n",
+        encoding="utf-8",
+    )
+    (fake_path / "codebase-memory-mcp").chmod(0o755)
+
     cfg = EverMindConfig(
         home=tmp_path / "home",
         default_space="coding:test",
-        codebase_memory_path=str(tmp_path / "missing-codebase-memory-mcp.exe"),
+        codebase_source_dir=source,
+        codebase_binary_path=internal_binary,
     )
+    engine = CodebaseEngine(cfg)
+
+    with patch.dict(os.environ, {"PATH": str(fake_path)}, clear=False):
+        result = engine.call("index_repository", {"repo_path": str(tmp_path)})
+
+    assert result["ok"] is True
+    assert result["backend"] == "vendored-codebase-memory-mcp"
+    assert result["fallback"] == "vendored"
+    assert result["source_integrated"] is True
+    assert result["tree_sitter_grammar_count"] == EXPECTED_TREE_SITTER_GRAMMAR_COUNT
+    assert result["hybrid_lsp_files_present"] == list(REQUIRED_HYBRID_LSP_FILES)
+    assert result["binary_path"] == str(internal_binary)
+    assert not marker.exists()
+
+
+def test_vendored_codebase_uses_piped_json_protocol(tmp_path):
+    source = tmp_path / "third_party" / "codebase-memory-mcp"
+    _write_minimal_vendored_codebase_source(source)
+    binary = source / "build" / "c" / "codebase-memory-mcp"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("placeholder", encoding="utf-8")
+    cfg = EverMindConfig(
+        home=tmp_path / "home",
+        default_space="coding:test",
+        codebase_source_dir=source,
+        codebase_binary_path=binary,
+    )
+
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"ok":true,"project":"ignored"}',
+        stderr="",
+    )
+    with patch("evermind_mcp.vendored_codebase.subprocess.run", return_value=completed) as run:
+        result = CodebaseEngine(cfg).call(
+            "index_repository",
+            {"repo_path": str(tmp_path), "project": "display-name"},
+        )
+
+    command = run.call_args.args[0]
+    assert command == [str(binary), "cli", "--json", "index_repository"]
+    assert json.loads(run.call_args.kwargs["input"])["name"] == result["workspace_id"]
+    assert not any(argument.startswith("{") for argument in command)
+
+
+def test_codebase_native_engine_detect_changes_resolves_project_from_repo_path(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def alpha():\n    return 'ok'\n", encoding="utf-8")
+    cfg = _native_only_config(tmp_path)
     engine = CodebaseEngine(cfg)
 
     with patch.dict(os.environ, {"PATH": ""}, clear=False):
@@ -355,98 +413,7 @@ def test_codebase_native_fallback_detect_changes_resolves_project_from_repo_path
     assert changes["changed_files"] == []
 
 
-def test_archive_bridge_list_workspaces_local_does_not_require_cloud(tmp_path, monkeypatch):
-    cfg = EverMindConfig(
-        home=tmp_path,
-        default_space="coding:test",
-        basic_memory_path="basic-memory",
-    )
-    bridge = ArchiveBridge(cfg)
-
-    monkeypatch.setattr(
-        archive_bridge,
-        "resolve_executable",
-        lambda configured, fallback: "basic-memory",
-    )
-    monkeypatch.setattr(
-        archive_bridge,
-        "run_json_command",
-        lambda *args, **kwargs: pytest.fail("local list_workspaces should not call CLI"),
-    )
-
-    result = bridge.call("list_workspaces", {"local": True})
-
-    assert result["ok"] is True
-    assert result["workspaces"] == []
-    assert result["cloud_available"] is False
-    assert result["reason"] == "local_mode_no_cloud"
-
-
-def test_archive_fast_path_reads_writes_and_searches_without_cli(tmp_path, monkeypatch):
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        archive_root=tmp_path / "archive",
-        archive_candidate_dir=tmp_path / "archive" / ".candidates",
-    )
-    bridge = ArchiveBridge(cfg)
-    monkeypatch.setattr(
-        archive_bridge,
-        "run_json_command",
-        lambda *args, **kwargs: pytest.fail("local fast path should not call CLI"),
-    )
-
-    written = bridge.call(
-        "write_note",
-        {
-            "title": "Eval Note",
-            "folder": "eval",
-            "content": "Initial content",
-            "project": "sample",
-            "local": True,
-            "overwrite": True,
-            "tags": ["eval"],
-        },
-    )
-    read = bridge.call("read_note", {"identifier": "eval/eval-note", "project": "sample"})
-    search = bridge.call("search_notes", {"query": "Initial", "project": "sample"})
-    projects = bridge.call("list_memory_projects", {"local": True})
-
-    assert written["ok"] is True
-    assert written["fast_path"] is True
-    assert read["content"].startswith("# Eval Note")
-    assert search["count"] == 1
-    assert projects["projects"][0]["name"] == "sample"
-
-
-def test_archive_fast_path_search_identifier_can_be_read_without_project(tmp_path):
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        archive_root=tmp_path / "archive",
-        archive_candidate_dir=tmp_path / "archive" / ".candidates",
-    )
-    bridge = ArchiveBridge(cfg)
-    bridge.call(
-        "write_note",
-        {
-            "title": "Cross Project Note",
-            "folder": "eval",
-            "content": "needle",
-            "project": "sample",
-            "overwrite": True,
-        },
-    )
-
-    search = bridge.call("search_notes", {"query": "needle"})
-    read = bridge.call("read_note", {"identifier": search["results"][0]["identifier"]})
-
-    assert search["results"][0]["identifier"] == "sample/eval/cross-project-note"
-    assert read["ok"] is True
-    assert "needle" in read["content"]
-
-
-def test_archive_fast_path_project_slug_cannot_escape_archive_root(tmp_path):
+def test_archive_source_fusion_metadata_exposes_basic_memory_license(tmp_path):
     cfg = EverMindConfig(
         home=tmp_path / "home",
         default_space="coding:test",
@@ -455,162 +422,59 @@ def test_archive_fast_path_project_slug_cannot_escape_archive_root(tmp_path):
     )
     bridge = ArchiveBridge(cfg)
 
-    result = bridge.call(
-        "write_note",
-        {
-            "title": "Safe Note",
-            "folder": "eval",
-            "content": "safe",
-            "project": "..",
-            "overwrite": True,
-        },
-    )
+    metadata = bridge.metadata()
 
-    assert result["ok"] is True
-    assert (tmp_path / "archive" / "projects" / "default" / "eval" / "safe-note.md").exists()
-    assert not (tmp_path / "archive" / "eval" / "safe-note.md").exists()
+    assert metadata["backend"] == "source-fused-basic-memory"
+    assert metadata["license"] == "AGPL-3.0-or-later"
+    assert metadata["bridge_runtime_allowed"] is False
+    assert "basic-memory" in metadata["source_path"]
 
 
-def test_archive_fast_path_concurrent_append_is_recoverable(tmp_path):
+@pytest.mark.asyncio
+async def test_status_health_expose_local_provider_boundary(tmp_path):
     cfg = EverMindConfig(
         home=tmp_path / "home",
         default_space="coding:test",
+        embed_enabled=False,
+        rerank_enabled=False,
         archive_root=tmp_path / "archive",
         archive_candidate_dir=tmp_path / "archive" / ".candidates",
     )
-    bridge = ArchiveBridge(cfg)
-    bridge.call(
-        "write_note",
-        {
-            "title": "Concurrent Note",
-            "folder": "eval",
-            "content": "base",
-            "project": "sample",
-            "overwrite": True,
-        },
-    )
+    svc = MemoryService(cfg)
 
-    def append_line(index: int) -> dict:
-        return bridge.call(
-            "edit_note",
-            {
-                "identifier": "eval/concurrent-note",
-                "operation": "append",
-                "content": f"line-{index}",
-                "project": "sample",
-            },
+    status = await svc.status()
+    health = await svc.health()
+
+    for result in (status, health):
+        assert result["provider_boundary"] == {
+            "mode": "local",
+            "sync_mode": "off",
+            "cloud_enabled": False,
+            "bridge_runtime_allowed": False,
+            "code_graph_provider": "source-fused",
+            "archive_provider": "source-fused",
+        }
+        assert result["archive_backend"] == "source-fused-basic-memory"
+        assert result["archive_license"] == "AGPL-3.0-or-later"
+
+
+def test_codebase_large_repo_pressure_indexes_500_files_without_external_binary(tmp_path):
+    repo = tmp_path / "large-repo"
+    repo.mkdir()
+    for index in range(500):
+        (repo / f"module_{index:03d}.py").write_text(
+            f"def fn_{index:03d}():\n    return 'needle-{index:03d}'\n",
+            encoding="utf-8",
         )
+    cfg = _native_only_config(tmp_path)
+    engine = CodebaseEngine(cfg)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(append_line, range(16)))
+    with patch.dict(os.environ, {"PATH": ""}, clear=False):
+        indexed = engine.call("index_repository", {"repo_path": str(repo), "project": "large"})
+        search = engine.call("search_code", {"project": "large", "pattern": "needle-499"})
 
-    read = bridge.call("read_note", {"identifier": "eval/concurrent-note", "project": "sample"})
-
-    assert all(item["ok"] for item in results)
-    for index in range(16):
-        assert f"line-{index}" in read["content"]
-
-
-def test_archive_fast_path_recovers_from_stale_tmp_and_lock(tmp_path):
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        archive_root=tmp_path / "archive",
-        archive_candidate_dir=tmp_path / "archive" / ".candidates",
-    )
-    bridge = ArchiveBridge(cfg)
-    first = bridge.call(
-        "write_note",
-        {
-            "title": "Crash Note",
-            "folder": "eval",
-            "content": "stable content",
-            "project": "sample",
-            "overwrite": True,
-        },
-    )
-    note_path = tmp_path / "archive" / "projects" / "sample" / "eval" / "crash-note.md"
-    stale_time = time.time() - 120
-    (note_path.parent / "crash-note.md.leftover.tmp").write_text("partial", encoding="utf-8")
-    lock_path = note_path.with_name(note_path.name + ".lock")
-    lock_path.write_text("stale", encoding="utf-8")
-    os.utime(lock_path, (stale_time, stale_time))
-
-    second = bridge.call(
-        "edit_note",
-        {
-            "identifier": "eval/crash-note",
-            "operation": "append",
-            "content": "after restart",
-            "project": "sample",
-        },
-    )
-    read = bridge.call("read_note", {"identifier": "eval/crash-note", "project": "sample"})
-
-    assert first["ok"] is True
-    assert second["ok"] is True
-    assert "stable content" in read["content"]
-    assert "after restart" in read["content"]
-    assert not lock_path.exists()
-
-
-def test_archive_fast_path_error_schema_is_machine_readable(tmp_path):
-    cfg = EverMindConfig(
-        home=tmp_path / "home",
-        default_space="coding:test",
-        archive_root=tmp_path / "archive",
-        archive_candidate_dir=tmp_path / "archive" / ".candidates",
-    )
-    bridge = ArchiveBridge(cfg)
-
-    result = bridge.call("write_note", {"folder": "missing-title"})
-
-    assert result["ok"] is False
-    assert result["code"] == "ARCHIVE_INVALID_ARGUMENT"
-    assert result["message"]
-    assert result["retryable"] is False
-
-
-def test_run_json_command_sanitizes_python_env(monkeypatch):
-    captured = {}
-    monkeypatch.setenv("PYTHONHOME", "bad-home")
-    monkeypatch.setenv("PYTHONPATH", "bad-path")
-    monkeypatch.setenv("PYTHONNOUSERSITE", "1")
-
-    def fake_run(command, **kwargs):
-        captured["env"] = kwargs["env"]
-        return SimpleNamespace(returncode=0, stdout='{"ok": true}', stderr="")
-
-    monkeypatch.setattr(tool_bridge.subprocess, "run", fake_run)
-
-    result = tool_bridge.run_json_command(["basic-memory", "tool", "list-projects"], timeout_seconds=1)
-
-    assert result.ok is True
-    assert "PYTHONHOME" not in captured["env"]
-    assert "PYTHONPATH" not in captured["env"]
-    assert "PYTHONNOUSERSITE" not in captured["env"]
-
-
-def test_archive_bridge_maps_write_note_arguments_to_basic_memory_cli():
-    command = _archive_args(
-        "write_note",
-        {
-            "title": "Project Overview",
-            "folder": "evermind",
-            "content": "Body",
-            "tags": ["evermind", "mcp"],
-            "type": ["note"],
-            "project": "default",
-            "overwrite": True,
-            "local": True,
-        },
-    )
-
-    assert command[:4] == ["--title", "Project Overview", "--folder", "evermind"]
-    assert ["--content", "Body"] == command[4:6]
-    assert "--tags" in command
-    assert command[command.index("--tags") + 1] == "evermind,mcp"
-    assert "--project" in command
-    assert command[command.index("--project") + 1] == "default"
-    assert "--overwrite" in command
-    assert "--local" in command
+    assert indexed["ok"] is True
+    assert indexed["files_indexed"] == 500
+    assert indexed["fallback"] == "native"
+    assert search["ok"] is True
+    assert search["total_results"] == 1

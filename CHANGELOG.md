@@ -38,9 +38,11 @@ with an embedded SQLite database. Reduced 9 MCP tools to 4. Zero-config setup.
 ### Removed
 
 - `EverOS` dependency (external HTTP service on port 3378)
-- `server.py`, `memory_service.py`, `everos_client.py`, `cloud_client.py`,
-  `space_catalog_service.py`, `archive_bridge.py`, `content_guard.py`, `config.py`
-  (replaced by v2 equivalents)
+- Legacy HTTP/cloud modules such as `server.py`, `memory_service.py`,
+  `everos_client.py`, `cloud_client.py`, `space_catalog_service.py`,
+  `content_guard.py`, and `config.py` (replaced by v2 equivalents)
+- Runtime bridge requirements for code graph and archive engines; both now run
+  through in-repo source-fused backends with local fallback behavior.
 
 ---
 

@@ -10,7 +10,7 @@ Use alongside EverMind memory tools. Typical flow:
 2. Starting work on unknown module → `search_graph` for context → `recall()` for prior decisions
 3. Before broad refactor → `trace_path` for impact → `recall()` for past decisions about affected code
 
-# Codebase Memory Skill
+# EverMind Code Graph Skill
 
 Use this skill when memory needs code evidence or when a repository is unfamiliar.
 

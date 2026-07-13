@@ -1,0 +1,161 @@
+{
+  "schema_version": 2,
+  "tree_hash": {
+    "algorithm": "sha256-path-v1",
+    "entry_format": "<lowercase file sha256><two spaces><forward-slash relative path><newline>",
+    "path_order": "unicode-codepoint-ascending",
+    "excluded_names": [
+      ".git",
+      ".venv",
+      ".pytest_cache",
+      ".ruff_cache",
+      ".mypy_cache",
+      "__pycache__",
+      "build",
+      "dist",
+      "node_modules"
+    ],
+    "excluded_files": [
+      "*.pyc",
+      "graph-ui/tsconfig.tsbuildinfo",
+      "internal/cbm/vendored/grammars/lean/parser.c",
+      "source-manifest.json",
+      "src/ui/embedded_assets.c"
+    ]
+  },
+  "basic_memory": {
+    "version": "0.22.1",
+    "upstream": "https://github.com/basicmachines-co/basic-memory",
+    "source_ref": "main",
+    "commit": "0e59bbffaf7dbca8f0507d1c8cc15033332670ee",
+    "upstream_git_tree": "1fbf6b2a8b4136f000b2dd579a03a9bbdd1eda26",
+    "license": "AGPL-3.0-or-later",
+    "file_count": 1005,
+    "source_bytes": 11156097,
+    "tree_sha256": "f9acd4578a92ec2a10d9dd032be917a64c4260ba7901a823dc6adf0766b26f2e",
+    "exact_upstream_copy": false,
+    "local_overlays": [
+      {
+        "id": "windows_short_path_watch_events",
+        "paths": [
+          "src/basic_memory/sync/watch_service.py"
+        ]
+      },
+      {
+        "id": "zero_project_lifecycle",
+        "paths": [
+          "src/basic_memory/services/project_service.py"
+        ]
+      },
+      {
+        "id": "local_only_runtime_dependencies",
+        "paths": [
+          "pyproject.toml"
+        ]
+      }
+    ]
+  },
+  "codebase_memory_mcp": {
+    "version": "0.8.1",
+    "upstream": "https://github.com/DeusData/codebase-memory-mcp",
+    "source_ref": "main",
+    "commit": "c3bee33d543a592c63aebf11333090c37868c1c6",
+    "upstream_git_tree": "0a8ad8345d0aec264d04ccd8453c5c75bf4c79dc",
+    "license": "MIT",
+    "file_count": 2095,
+    "source_bytes": 1338189838,
+    "tree_sha256": "e5ce79ea06d941003c3e7b0ee3768ab4ff84b6ffa66ff8010816c61546150751",
+    "binary_path": "codebase-memory-mcp/build/c/codebase-memory-mcp.exe",
+    "binary_build_target": "make -f Makefile.cbm cbm-with-ui CC=gcc CXX=g++",
+    "binary_version": "dev",
+    "binary_bytes": 274680815,
+    "binary_sha256": "4464e13972e9d45c7a861867bb29ad98dcacc25022db4fb2b9861d5b41451e84",
+    "invocation_protocol": {
+      "argv": [
+        "<binary>",
+        "cli",
+        "--json",
+        "<tool>"
+      ],
+      "arguments_transport": "stdin-json",
+      "deprecated_raw_json_argv": false
+    },
+    "local_overlays": [
+      {
+        "id": "windows_build_and_product_guards",
+        "paths": [
+          "Makefile.cbm",
+          "scripts/test-windows.ps1"
+        ]
+      },
+      {
+        "id": "failed_file_retry_coverage_and_deletion_recovery",
+        "paths": [
+          "src/pipeline/artifact.c",
+          "src/pipeline/pass_calls.c",
+          "src/pipeline/pass_parallel.c",
+          "src/pipeline/pipeline.c",
+          "src/pipeline/pipeline_incremental.c",
+          "src/pipeline/pipeline_internal.h",
+          "src/store/store.c",
+          "src/store/store.h"
+        ]
+      },
+      {
+        "id": "portable_test_cache_paths_and_recovery_regressions",
+        "paths": [
+          "tests/repro/repro_harness.h",
+          "tests/test_convergence_probe.c",
+          "tests/test_edge_imports.c",
+          "tests/test_edge_structural.c",
+          "tests/test_edge_types_probe.c",
+          "tests/test_grammar_probe_a.c",
+          "tests/test_grammar_probe_b.c",
+          "tests/test_grammar_probe_c.c",
+          "tests/test_grammar_probe_d.c",
+          "tests/test_grammar_probe_e.c",
+          "tests/test_grammar_probe_f.c",
+          "tests/test_grammar_probe_g.c",
+          "tests/test_helpers.h",
+          "tests/test_incremental.c",
+          "tests/test_index_resilience.c",
+          "tests/test_integration.c",
+          "tests/test_lang_contract.c",
+          "tests/test_lsp_resolution_probe.c",
+          "tests/test_matrix_known_classes.c",
+          "tests/test_matrix_new_constructs.c",
+          "tests/test_node_creation_probe.c",
+          "tests/test_store_nodes.c"
+        ]
+      },
+      {
+        "id": "offline_fastapi_incremental_fixture",
+        "paths": [
+          "tests/fixtures/fastapi-0.99.1.bundle"
+        ],
+        "fixture": {
+          "upstream": "https://github.com/fastapi/fastapi",
+          "commit": "dd4e78ca7b09abdf0d4646fe4697316c021a8b2e",
+          "upstream_git_tree": "2a0c768e0e8dfd1b7093daf7c27b503480d3b22e",
+          "bundle_commit": "12a87661bff796348f848b2d3581262f6e242204",
+          "bytes": 10933816,
+          "sha256": "0079fee595340e09a2bf882ab7e4565539c8638bf899fa56f99d35d578f152e8"
+        }
+      },
+      {
+        "id": "large_lean_parser_chunking",
+        "paths": [
+          "internal/cbm/vendored/grammars/lean/parser.c.chunks/"
+        ]
+      },
+      {
+        "id": "complete_windows_source_dependencies",
+        "paths": [
+          "internal/cbm/lsp/php_lsp.c",
+          "internal/cbm/service_patterns.h",
+          "vendored/zlib/"
+        ]
+      }
+    ]
+  }
+}

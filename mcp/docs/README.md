@@ -6,4 +6,4 @@ EverMind MCP is documented from the parent project:
 - `../../docs/mcp-tools.md`
 - `../../docs/user-journey.md`
 
-This directory is intentionally minimal so the bundled MCP bridge does not expose obsolete standalone release or competition material.
+This directory is intentionally minimal so the bundled MCP interface does not expose obsolete standalone release or competition material.

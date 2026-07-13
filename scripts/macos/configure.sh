@@ -7,10 +7,7 @@ USER_HOME="${USER_HOME:-$HOME}"
 NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
 COPY_INSTEAD_OF_SYMLINK="${COPY_INSTEAD_OF_SYMLINK:-0}"
 RUN_CHECKS="${RUN_CHECKS:-0}"
-LLM_API_KEY="${LLM_API_KEY:-}"
-MULTIMODAL_API_KEY="${MULTIMODAL_API_KEY:-}"
-EMBEDDING_API_KEY="${EMBEDDING_API_KEY:-}"
-RERANK_API_KEY="${RERANK_API_KEY:-}"
+SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-}"
 
 info() { printf '[EverMind] %s\n' "$1"; }
 
@@ -40,20 +37,14 @@ PY
 if [[ "$NON_INTERACTIVE" != "1" ]]; then
   read -r -p "EverMind runtime directory [$EVERMIND_HOME]: " home_input
   [[ -z "$home_input" ]] || EVERMIND_HOME="$home_input"
-  read -r -p "LLM API key (blank to skip): " LLM_API_KEY
-  read -r -p "Multimodal API key (blank to skip): " MULTIMODAL_API_KEY
-  read -r -p "Embedding API key (blank to skip): " EMBEDDING_API_KEY
-  read -r -p "Rerank API key (blank to skip): " RERANK_API_KEY
+  read -r -p "SiliconFlow API key (blank to use local models only): " SILICONFLOW_API_KEY
 fi
 
 info "Preparing local runtime and generated MCP config."
-EVERMIND_HOME="$EVERMIND_HOME" SKIP_TOOL_INSTALL=1 bash "$PROJECT_ROOT/scripts/macos/install-all.sh"
+EVERMIND_HOME="$EVERMIND_HOME" bash "$PROJECT_ROOT/scripts/macos/install-all.sh"
 
 ENV_PATH="$PROJECT_ROOT/.env"
-set_env_line "$ENV_PATH" "EVEROS_LLM__API_KEY" "$LLM_API_KEY"
-set_env_line "$ENV_PATH" "EVEROS_MULTIMODAL__API_KEY" "$MULTIMODAL_API_KEY"
-set_env_line "$ENV_PATH" "EVEROS_EMBEDDING__API_KEY" "$EMBEDDING_API_KEY"
-set_env_line "$ENV_PATH" "EVEROS_RERANK__API_KEY" "$RERANK_API_KEY"
+set_env_line "$ENV_PATH" "EVERMIND_SILICONFLOW_API_KEY" "$SILICONFLOW_API_KEY"
 
 info "Installing EverMind skills into user skill folders."
 USER_HOME="$USER_HOME" COPY_INSTEAD_OF_SYMLINK="$COPY_INSTEAD_OF_SYMLINK" bash "$PROJECT_ROOT/scripts/macos/setup-user.sh"

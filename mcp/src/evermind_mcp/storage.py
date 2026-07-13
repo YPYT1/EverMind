@@ -1,9 +1,11 @@
+import hashlib
 import json
 import logging
 import re
 import sqlite3
 import threading
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -13,10 +15,17 @@ from .types_v2 import MemoryRow, BriefingData
 logger = logging.getLogger(__name__)
 
 
+def _normalized_content_hash(content: str) -> str:
+    normalized = unicodedata.normalize("NFKC", content)
+    normalized = " ".join(normalized.split()).casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def _process_for_fts(text: str) -> str:
     """Preprocess text for FTS indexing. Uses jieba for Chinese segmentation if available."""
     try:
         import jieba  # type: ignore
+
         tokens = list(jieba.cut(text, cut_all=False))
         return " ".join(t for t in tokens if t.strip())
     except ImportError:
@@ -45,9 +54,19 @@ class EmbeddedStorage:
     @property
     def conn(self) -> sqlite3.Connection:
         if not getattr(self._local, "conn", None):
-            c = sqlite3.connect(self._db_path, check_same_thread=False)
+            c = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
             c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA busy_timeout=30000")
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    c.execute("PRAGMA journal_mode=WAL")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).casefold() or time.monotonic() >= deadline:
+                        c.close()
+                        raise
+                    time.sleep(0.05)
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA foreign_keys=ON")
             if self._vec_available:
@@ -89,7 +108,111 @@ class EmbeddedStorage:
                     created_at   INTEGER NOT NULL,
                     updated_at   INTEGER NOT NULL,
                     expires_at   INTEGER,
-                    embedding_ready INTEGER NOT NULL DEFAULT 0
+                    embedding_ready INTEGER NOT NULL DEFAULT 0,
+                    normalized_hash TEXT,
+                    state        TEXT    NOT NULL DEFAULT 'active',
+                    valid_from   INTEGER,
+                    valid_to     INTEGER,
+                    supersedes_id TEXT REFERENCES memories(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id         TEXT PRIMARY KEY,
+                    remote_fingerprint TEXT,
+                    display_name       TEXT NOT NULL,
+                    state              TEXT NOT NULL DEFAULT 'active',
+                    created_at         INTEGER NOT NULL,
+                    updated_at         INTEGER NOT NULL,
+                    detached_at        INTEGER,
+                    meta               TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS workspaces (
+                    workspace_id   TEXT PRIMARY KEY,
+                    project_id     TEXT NOT NULL REFERENCES projects(project_id),
+                    canonical_path TEXT NOT NULL UNIQUE,
+                    git_identity   TEXT,
+                    display_name   TEXT NOT NULL,
+                    state          TEXT NOT NULL DEFAULT 'active',
+                    created_at     INTEGER NOT NULL,
+                    updated_at     INTEGER NOT NULL,
+                    detached_at    INTEGER,
+                    meta           TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_sources (
+                    memory_id        TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    project_id       TEXT NOT NULL REFERENCES projects(project_id),
+                    workspace_id     TEXT NOT NULL DEFAULT '',
+                    importance       INTEGER NOT NULL DEFAULT 0,
+                    tags             TEXT NOT NULL DEFAULT '[]',
+                    evidence         TEXT,
+                    first_observed_at INTEGER NOT NULL,
+                    last_observed_at  INTEGER NOT NULL,
+                    active           INTEGER NOT NULL DEFAULT 1,
+                    meta             TEXT NOT NULL DEFAULT '{}',
+                    PRIMARY KEY (memory_id, project_id, workspace_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_conflicts (
+                    conflict_id TEXT PRIMARY KEY,
+                    claim_key   TEXT NOT NULL,
+                    state       TEXT NOT NULL DEFAULT 'open',
+                    created_at  INTEGER NOT NULL,
+                    updated_at  INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_conflict_members (
+                    conflict_id TEXT NOT NULL REFERENCES memory_conflicts(conflict_id) ON DELETE CASCADE,
+                    memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    PRIMARY KEY (conflict_id, memory_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS embedding_profiles (
+                    profile_id TEXT PRIMARY KEY,
+                    provider   TEXT NOT NULL,
+                    model      TEXT NOT NULL,
+                    version    TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(provider, model, version, dimensions)
+                );
+
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    profile_id TEXT NOT NULL REFERENCES embedding_profiles(profile_id),
+                    vector     BLOB,
+                    status     TEXT NOT NULL DEFAULT 'pending',
+                    attempts   INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (memory_id, profile_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS project_operations (
+                    operation_id   TEXT PRIMARY KEY,
+                    kind           TEXT NOT NULL,
+                    state          TEXT NOT NULL,
+                    payload        TEXT NOT NULL DEFAULT '{}',
+                    completed_steps TEXT NOT NULL DEFAULT '[]',
+                    error          TEXT,
+                    created_at     INTEGER NOT NULL,
+                    updated_at     INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS legacy_memory_map (
+                    source_db       TEXT NOT NULL,
+                    legacy_id       TEXT NOT NULL,
+                    memory_id       TEXT NOT NULL REFERENCES memories(id),
+                    imported_at     INTEGER NOT NULL,
+                    PRIMARY KEY (source_db, legacy_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS basic_project_bindings (
+                    project_id       TEXT PRIMARY KEY REFERENCES projects(project_id),
+                    basic_external_id TEXT,
+                    basic_name       TEXT,
+                    basic_path       TEXT,
+                    updated_at       INTEGER NOT NULL
                 );
 
                 -- FTS5 (self-managed, no external content or triggers)
@@ -150,8 +273,15 @@ class EmbeddedStorage:
                 CREATE INDEX IF NOT EXISTS idx_memories_expires    ON memories(expires_at) WHERE expires_at IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS idx_event_log_space     ON event_log(space);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_unique ON graph_nodes(space, node_type, label);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_remote
+                    ON projects(remote_fingerprint) WHERE remote_fingerprint IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_memory_sources_project ON memory_sources(project_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_conflicts_claim_key
+                    ON memory_conflicts(claim_key);
             """)
             c.commit()
+
+            self._upgrade_catalog_schema(c)
 
         # vec0 table (separate, after vec extension is loaded)
         if self._vec_available:
@@ -167,6 +297,155 @@ class EmbeddedStorage:
             except Exception as exc:
                 logger.warning("Could not create memory_vecs table: %s", exc)
                 self._vec_available = False
+
+    def _upgrade_catalog_schema(self, conn: sqlite3.Connection) -> None:
+        """Upgrade an existing per-space schema in place without losing rows."""
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        additions = {
+            "normalized_hash": "TEXT",
+            "state": "TEXT NOT NULL DEFAULT 'active'",
+            "valid_from": "INTEGER",
+            "valid_to": "INTEGER",
+            "supersedes_id": "TEXT REFERENCES memories(id)",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {declaration}")
+
+        rows = conn.execute(
+            "SELECT rowid, id, content, space, importance, tags, meta, state, "
+            "created_at, updated_at FROM memories ORDER BY created_at, rowid"
+        ).fetchall()
+        canonical_by_hash: dict[str, sqlite3.Row] = {}
+        duplicates: list[tuple[sqlite3.Row, sqlite3.Row]] = []
+        now = self._now_ms()
+
+        for row in rows:
+            project_id = row["space"]
+            conn.execute(
+                """
+                INSERT INTO projects
+                    (project_id, display_name, state, created_at, updated_at)
+                VALUES (?, ?, 'active', ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    updated_at=excluded.updated_at
+                """,
+                (project_id, project_id, row["created_at"], now),
+            )
+            normalized_hash = _normalized_content_hash(row["content"])
+            state = row["state"] or "active"
+            canonical = (
+                canonical_by_hash.get(normalized_hash) if state == "active" else None
+            )
+            if state != "active" or canonical is None:
+                if state == "active":
+                    canonical_by_hash[normalized_hash] = row
+                conn.execute(
+                    """
+                    UPDATE memories
+                    SET normalized_hash=?, state=COALESCE(state, 'active'),
+                        valid_from=COALESCE(valid_from, created_at)
+                    WHERE id=?
+                    """,
+                    (normalized_hash, row["id"]),
+                )
+            else:
+                duplicates.append((row, canonical))
+
+            conn.execute(
+                """
+                INSERT INTO memory_sources
+                    (memory_id, project_id, workspace_id, importance, tags, evidence,
+                     first_observed_at, last_observed_at, active, meta)
+                VALUES (?, ?, '', ?, ?, NULL, ?, ?, 1, ?)
+                ON CONFLICT(memory_id, project_id, workspace_id) DO UPDATE SET
+                    importance=MAX(memory_sources.importance, excluded.importance),
+                    last_observed_at=MAX(memory_sources.last_observed_at, excluded.last_observed_at)
+                """,
+                (
+                    row["id"],
+                    project_id,
+                    row["importance"],
+                    row["tags"],
+                    row["created_at"],
+                    row["updated_at"],
+                    row["meta"],
+                ),
+            )
+
+        for duplicate, canonical in duplicates:
+            source_rows = conn.execute(
+                "SELECT * FROM memory_sources WHERE memory_id=?", (duplicate["id"],)
+            ).fetchall()
+            for source in source_rows:
+                conn.execute(
+                    """
+                    INSERT INTO memory_sources
+                        (memory_id, project_id, workspace_id, importance, tags, evidence,
+                         first_observed_at, last_observed_at, active, meta)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(memory_id, project_id, workspace_id) DO UPDATE SET
+                        importance=MAX(memory_sources.importance, excluded.importance),
+                        first_observed_at=MIN(memory_sources.first_observed_at, excluded.first_observed_at),
+                        last_observed_at=MAX(memory_sources.last_observed_at, excluded.last_observed_at),
+                        active=MAX(memory_sources.active, excluded.active)
+                    """,
+                    (
+                        canonical["id"],
+                        source["project_id"],
+                        source["workspace_id"],
+                        source["importance"],
+                        source["tags"],
+                        source["evidence"],
+                        source["first_observed_at"],
+                        source["last_observed_at"],
+                        source["active"],
+                        source["meta"],
+                    ),
+                )
+            conn.execute(
+                "UPDATE event_log SET memory_id=? WHERE memory_id=?",
+                (canonical["id"], duplicate["id"]),
+            )
+            self._replace_graph_memory_id(conn, duplicate["id"], canonical["id"])
+            conn.execute(
+                "DELETE FROM memories_fts WHERE rowid=?", (duplicate["rowid"],)
+            )
+            if self._vec_available:
+                conn.execute(
+                    "DELETE FROM memory_vecs WHERE memory_rowid=?",
+                    (duplicate["rowid"],),
+                )
+            conn.execute("DELETE FROM memories WHERE id=?", (duplicate["id"],))
+
+        conn.execute("DROP INDEX IF EXISTS idx_memories_normalized_hash")
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_memories_normalized_hash "
+            "ON memories(normalized_hash) WHERE state='active'"
+        )
+        conn.commit()
+
+    @staticmethod
+    def _replace_graph_memory_id(
+        conn: sqlite3.Connection, old_memory_id: str, new_memory_id: str
+    ) -> None:
+        rows = conn.execute("SELECT id, meta FROM graph_edges").fetchall()
+        for row in rows:
+            try:
+                meta = json.loads(row["meta"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if meta.get("memory_id") != old_memory_id:
+                continue
+            meta["memory_id"] = new_memory_id
+            conn.execute(
+                "UPDATE graph_edges SET meta=? WHERE id=?",
+                (json.dumps(meta), row["id"]),
+            )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -201,6 +480,10 @@ class EmbeddedStorage:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             expires_at=row["expires_at"],
+            state=row["state"],
+            valid_from=row["valid_from"],
+            valid_to=row["valid_to"],
+            supersedes_id=row["supersedes_id"],
             embedding_ready=bool(row["embedding_ready"]),
             score=score,
         )
@@ -220,47 +503,298 @@ class EmbeddedStorage:
         tags: Optional[list] = None,
         meta: Optional[dict] = None,
     ) -> MemoryRow:
-        now = self._now_ms()
-        memory_id = str(uuid.uuid4())
-        expires_at = now + 24 * 3600 * 1000 if layer == "working" else None
-        tags_json = json.dumps(tags or [])
-        meta_json = json.dumps(meta or {})
-
-        with self._write_lock:
-            self.conn.execute(
-                """
-                INSERT INTO memories
-                    (id, content, space, layer, memory_type, role, importance,
-                     tags, meta, created_at, updated_at, expires_at, embedding_ready)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                """,
-                (memory_id, content, space, layer, memory_type, role, importance,
-                 tags_json, meta_json, now, now, expires_at),
-            )
-            # Manually insert into FTS with jieba preprocessing
-            inserted_rowid = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            processed_content = _process_for_fts(content)
-            self.conn.execute(
-                "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
-                (inserted_rowid, processed_content, tags_json)
-            )
-            self.conn.commit()
-
-        return MemoryRow(
-            id=memory_id,
-            content=content,
+        memory, _ = self.insert_memory_atomic(
             space=space,
+            content=content,
             layer=layer,
             memory_type=memory_type,
             role=role,
             importance=importance,
-            tags=tags or [],
-            meta=meta or {},
-            created_at=now,
-            updated_at=now,
-            expires_at=expires_at,
-            embedding_ready=False,
-            score=0.0,
+            tags=tags,
+            meta=meta,
+        )
+        return memory
+
+    def insert_memory_atomic(
+        self,
+        space: str,
+        content: str,
+        layer: str = "episodic",
+        memory_type: str = "auto",
+        role: str = "user",
+        importance: int = 0,
+        tags: Optional[list] = None,
+        meta: Optional[dict] = None,
+        workspace_id: str = "",
+        memory_id: str | None = None,
+        created_at: int | None = None,
+        updated_at: int | None = None,
+        expires_at: int | None = None,
+    ) -> tuple[MemoryRow, bool]:
+        """Insert once globally and attach this project's source atomically."""
+        now = self._now_ms()
+        memory_id = memory_id or str(uuid.uuid4())
+        created_at = now if created_at is None else created_at
+        updated_at = created_at if updated_at is None else updated_at
+        if expires_at is None and layer == "working":
+            expires_at = created_at + 24 * 3600 * 1000
+        tags_json = json.dumps(tags or [])
+        meta_json = json.dumps(meta or {})
+        normalized_hash = _normalized_content_hash(content)
+        evidence = (meta or {}).get("evidence")
+
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._ensure_project_row(conn, space, now)
+                cursor = conn.execute(
+                    """
+                    INSERT INTO memories
+                        (id, content, space, layer, memory_type, role, importance,
+                         tags, meta, created_at, updated_at, expires_at,
+                         embedding_ready, normalized_hash, state, valid_from)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'active', ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        memory_id,
+                        content,
+                        space,
+                        layer,
+                        memory_type,
+                        role,
+                        importance,
+                        tags_json,
+                        meta_json,
+                        created_at,
+                        updated_at,
+                        expires_at,
+                        normalized_hash,
+                        created_at,
+                    ),
+                )
+                inserted = cursor.rowcount == 1
+                if inserted:
+                    inserted_rowid = conn.execute(
+                        "SELECT last_insert_rowid()"
+                    ).fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                        (inserted_rowid, _process_for_fts(content), tags_json),
+                    )
+                else:
+                    row = conn.execute(
+                        "SELECT id FROM memories "
+                        "WHERE normalized_hash=? AND state='active'",
+                        (normalized_hash,),
+                    ).fetchone()
+                    if row is None:
+                        raise RuntimeError(
+                            "normalized memory conflict without canonical row"
+                        )
+                    memory_id = row["id"]
+
+                self._attach_source_row(
+                    conn,
+                    memory_id=memory_id,
+                    project_id=space,
+                    workspace_id=workspace_id,
+                    importance=importance,
+                    tags_json=tags_json,
+                    evidence=evidence,
+                    meta_json=meta_json,
+                    first_observed_at=created_at,
+                    last_observed_at=updated_at,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        row = self.conn.execute(
+            "SELECT * FROM memories WHERE id=?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("inserted memory could not be reloaded")
+        return self._row_to_memory(row), inserted
+
+    @staticmethod
+    def _ensure_project_row(
+        conn: sqlite3.Connection, project_id: str, observed_at: int
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO projects
+                (project_id, display_name, state, created_at, updated_at)
+            VALUES (?, ?, 'active', ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                state='active', updated_at=excluded.updated_at, detached_at=NULL
+            """,
+            (project_id, project_id, observed_at, observed_at),
+        )
+
+    @staticmethod
+    def _attach_source_row(
+        conn: sqlite3.Connection,
+        *,
+        memory_id: str,
+        project_id: str,
+        workspace_id: str,
+        importance: int,
+        tags_json: str,
+        evidence: str | None,
+        meta_json: str,
+        first_observed_at: int,
+        last_observed_at: int,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO memory_sources
+                (memory_id, project_id, workspace_id, importance, tags, evidence,
+                 first_observed_at, last_observed_at, active, meta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(memory_id, project_id, workspace_id) DO UPDATE SET
+                importance=MAX(memory_sources.importance, excluded.importance),
+                last_observed_at=MAX(memory_sources.last_observed_at, excluded.last_observed_at),
+                active=1
+            """,
+            (
+                memory_id,
+                project_id,
+                workspace_id,
+                importance,
+                tags_json,
+                evidence,
+                first_observed_at,
+                last_observed_at,
+                meta_json,
+            ),
+        )
+
+    def ensure_project(self, project_id: str) -> None:
+        now = self._now_ms()
+        with self._write_lock:
+            self._ensure_project_row(self.conn, project_id, now)
+            self.conn.commit()
+
+    def attach_memory_source(
+        self,
+        memory_id: str,
+        project_id: str,
+        *,
+        importance: int = 0,
+        tags: Optional[list] = None,
+        meta: Optional[dict] = None,
+        workspace_id: str = "",
+    ) -> None:
+        now = self._now_ms()
+        tags_json = json.dumps(tags or [])
+        meta_json = json.dumps(meta or {})
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._ensure_project_row(conn, project_id, now)
+                self._attach_source_row(
+                    conn,
+                    memory_id=memory_id,
+                    project_id=project_id,
+                    workspace_id=workspace_id,
+                    importance=importance,
+                    tags_json=tags_json,
+                    evidence=(meta or {}).get("evidence"),
+                    meta_json=meta_json,
+                    first_observed_at=now,
+                    last_observed_at=now,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def source_projects(self, memory_id: str) -> list[str]:
+        rows = self.conn.execute(
+            """
+            SELECT project_id
+            FROM memory_sources
+            WHERE memory_id=? AND active=1
+            ORDER BY project_id
+            """,
+            (memory_id,),
+        ).fetchall()
+        return [row["project_id"] for row in rows]
+
+    def find_active_memories_containing(
+        self, text: str, limit: int = 20
+    ) -> list[MemoryRow]:
+        rows = self.conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE state='active'
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND instr(lower(content), lower(?)) > 0
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (self._now_ms(), text, limit),
+        ).fetchall()
+        return [self._row_to_memory(row) for row in rows]
+
+    def record_memory_conflict(
+        self,
+        conflict_id: str,
+        claim_key: str,
+        memory_ids: list[str],
+    ) -> str | None:
+        members = sorted(set(filter(None, memory_ids)))
+        if len(members) < 2:
+            return None
+        now = self._now_ms()
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memory_conflicts
+                        (conflict_id, claim_key, state, created_at, updated_at)
+                    VALUES (?, ?, 'open', ?, ?)
+                    ON CONFLICT(conflict_id) DO UPDATE SET
+                        state='open', updated_at=excluded.updated_at
+                    """,
+                    (conflict_id, claim_key, now, now),
+                )
+                for memory_id in members:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO memory_conflict_members
+                            (conflict_id, memory_id)
+                        SELECT ?, id FROM memories WHERE id=?
+                        """,
+                        (conflict_id, memory_id),
+                    )
+                self._resolve_orphaned_conflicts(conn, now)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return conflict_id
+
+    @staticmethod
+    def _resolve_orphaned_conflicts(
+        conn: sqlite3.Connection, updated_at: int
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE memory_conflicts
+            SET state='resolved', updated_at=?
+            WHERE state='open' AND (
+                SELECT COUNT(*) FROM memory_conflict_members member
+                WHERE member.conflict_id=memory_conflicts.conflict_id
+            ) < 2
+            """,
+            (updated_at,),
         )
 
     @staticmethod
@@ -319,14 +853,12 @@ class EmbeddedStorage:
     ) -> "list[MemoryRow]":
         now = self._now_ms()
         params: list = [space]
-        sql = "SELECT * FROM memories WHERE space=?"
+        sql = "SELECT * FROM memories WHERE space=? AND state='active'"
         if layer is not None:
             sql += " AND layer=?"
             params.append(layer)
         if tags is not None and len(tags) > 0:
-            tag_clauses = " OR ".join(
-                "tags LIKE ?" for _ in tags
-            )
+            tag_clauses = " OR ".join("tags LIKE ?" for _ in tags)
             sql += f" AND ({tag_clauses})"
             for tag in tags:
                 params.append(f'%"{tag}"%')
@@ -337,7 +869,62 @@ class EmbeddedStorage:
         rows = self.conn.execute(sql, params).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
-    def search_fts(self, query: str, space: str, limit: int = 10, layer: str = None, tags: list = None) -> list[MemoryRow]:
+    def list_memories_global(
+        self,
+        current_project: str,
+        layer: str | None = None,
+        tags: list | None = None,
+        limit: int = 20,
+    ) -> list[MemoryRow]:
+        params: list = [current_project]
+        sql = """
+            SELECT m.*,
+                   MAX(CASE WHEN source.project_id=? AND source.active=1 THEN 1 ELSE 0 END)
+                       AS current_project_source,
+                   COALESCE(MAX(CASE WHEN source.active=1 THEN source.importance END), m.importance)
+                       AS source_importance
+            FROM memories m
+            LEFT JOIN memory_sources source ON source.memory_id=m.id
+            WHERE m.state='active'
+        """
+        if layer is not None:
+            sql += " AND m.layer=?"
+            params.append(layer)
+        if tags:
+            clauses = []
+            for tag in tags:
+                clauses.append(
+                    "(m.tags LIKE ? OR EXISTS("
+                    "SELECT 1 FROM memory_sources tag_source "
+                    "WHERE tag_source.memory_id=m.id AND tag_source.active=1 "
+                    "AND tag_source.tags LIKE ?))"
+                )
+                params.extend((f'%"{tag}"%', f'%"{tag}"%'))
+            sql += " AND (" + " OR ".join(clauses) + ")"
+        sql += " AND (m.expires_at IS NULL OR m.expires_at > ?)"
+        params.append(self._now_ms())
+        sql += (
+            " GROUP BY m.id"
+            " ORDER BY current_project_source DESC, source_importance DESC, m.updated_at DESC"
+            " LIMIT ?"
+        )
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        memories = []
+        for row in rows:
+            memory = self._row_to_memory(row)
+            memory.importance = row["source_importance"]
+            memories.append(memory)
+        return memories
+
+    def search_fts(
+        self,
+        query: str,
+        space: str,
+        limit: int = 10,
+        layer: str = None,
+        tags: list = None,
+    ) -> list[MemoryRow]:
         now = self._now_ms()
         processed_query = _process_for_fts(query)
         params: list = [self._fts_query(processed_query), space]
@@ -359,6 +946,7 @@ class EmbeddedStorage:
             JOIN memories_fts f ON m.rowid = f.rowid
             WHERE memories_fts MATCH ?
               AND m.space = ?
+              AND m.state='active'
               {extra}
               AND (m.expires_at IS NULL OR m.expires_at > ?)
             ORDER BY score
@@ -373,6 +961,67 @@ class EmbeddedStorage:
             result.append(self._row_to_memory(row, score=score))
         return result
 
+    def search_fts_global(
+        self,
+        query: str,
+        current_project: str,
+        limit: int = 10,
+        layer: str | None = None,
+        tags: list | None = None,
+        include_expired: bool = False,
+    ) -> list[MemoryRow]:
+        """Search the shared catalog; current project affects ranking, not visibility."""
+        processed_query = _process_for_fts(query)
+        params: list = [current_project, self._fts_query(processed_query)]
+        extra = ""
+        if layer is not None:
+            extra += " AND m.layer=?"
+            params.append(layer)
+        if tags:
+            tag_clauses = " OR ".join("m.tags LIKE ?" for _ in tags)
+            extra += f" AND ({tag_clauses})"
+            params.extend(f'%"{tag}"%' for tag in tags)
+        validity_filter = ""
+        if not include_expired:
+            validity_filter = (
+                "AND m.state='active' "
+                "AND (m.expires_at IS NULL OR m.expires_at > ?)"
+            )
+            params.append(self._now_ms())
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""
+            SELECT m.*, bm25(memories_fts) AS score,
+                   EXISTS(
+                       SELECT 1 FROM memory_sources source
+                       WHERE source.memory_id=m.id
+                         AND source.project_id=?
+                         AND source.active=1
+                   ) AS current_project_source,
+                   COALESCE((
+                       SELECT MAX(source.importance) FROM memory_sources source
+                       WHERE source.memory_id=m.id AND source.active=1
+                   ), m.importance) AS source_importance
+            FROM memories m
+            JOIN memories_fts f ON m.rowid=f.rowid
+            WHERE memories_fts MATCH ?
+              {extra}
+              {validity_filter}
+            ORDER BY current_project_source DESC, score
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        memories = []
+        for row in rows:
+            memory = self._row_to_memory(
+                row,
+                score=-row["score"] + (0.01 if row["current_project_source"] else 0.0),
+            )
+            memory.importance = row["source_importance"]
+            memories.append(memory)
+        return memories
+
     def search_vec(
         self, embedding: list[float], space: str, limit: int = 10
     ) -> list[MemoryRow]:
@@ -381,6 +1030,7 @@ class EmbeddedStorage:
         now = self._now_ms()
         try:
             import struct
+
             blob = struct.pack(f"{len(embedding)}f", *embedding)
             vec_rows = self.conn.execute(
                 """
@@ -404,6 +1054,7 @@ class EmbeddedStorage:
                 FROM memories m
                 WHERE m.rowid IN ({placeholders})
                   AND m.space = ?
+                  AND m.state='active'
                   AND (m.expires_at IS NULL OR m.expires_at > ?)
                 """,
                 (*rowid_to_dist.keys(), space, now),
@@ -420,10 +1071,290 @@ class EmbeddedStorage:
             logger.warning("Vector search failed: %s", exc)
             return []
 
+    def search_vec_global(
+        self,
+        embedding: list[float],
+        current_project: str,
+        limit: int = 10,
+        include_expired: bool = False,
+    ) -> list[MemoryRow]:
+        if not self._vec_available:
+            return []
+        try:
+            import struct
+
+            blob = struct.pack(f"{len(embedding)}f", *embedding)
+            vec_rows = self.conn.execute(
+                """
+                SELECT memory_rowid, distance
+                FROM memory_vecs
+                WHERE embedding MATCH ? AND k = ?
+                ORDER BY distance
+                """,
+                (blob, limit),
+            ).fetchall()
+            if not vec_rows:
+                return []
+            distances = {row["memory_rowid"]: row["distance"] for row in vec_rows}
+            placeholders = ",".join("?" for _ in distances)
+            validity_filter = ""
+            params: list = [current_project, *distances.keys()]
+            if not include_expired:
+                validity_filter = (
+                    "AND m.state='active' "
+                    "AND (m.expires_at IS NULL OR m.expires_at > ?)"
+                )
+                params.append(self._now_ms())
+            rows = self.conn.execute(
+                f"""
+                SELECT m.rowid AS rowid, m.*,
+                       EXISTS(
+                           SELECT 1 FROM memory_sources source
+                           WHERE source.memory_id=m.id AND source.project_id=?
+                             AND source.active=1
+                       ) AS current_project_source,
+                       COALESCE((
+                           SELECT MAX(source.importance) FROM memory_sources source
+                           WHERE source.memory_id=m.id AND source.active=1
+                       ), m.importance) AS source_importance
+                FROM memories m
+                WHERE m.rowid IN ({placeholders})
+                  {validity_filter}
+                """,
+                params,
+            ).fetchall()
+            memories = []
+            for row in rows:
+                score = 1.0 / (1.0 + distances[row["rowid"]])
+                if row["current_project_source"]:
+                    score += 0.01
+                memory = self._row_to_memory(row, score=score)
+                memory.importance = row["source_importance"]
+                memories.append(memory)
+            memories.sort(key=lambda memory: memory.score, reverse=True)
+            return memories
+        except Exception as exc:
+            logger.warning("Global vector search failed: %s", exc)
+            return []
+
+    def register_embedding_profile(
+        self,
+        profile_id: str,
+        provider: str,
+        model: str,
+        version: str,
+        dimensions: int,
+    ) -> None:
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO embedding_profiles
+                    (profile_id, provider, model, version, dimensions, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    provider=excluded.provider,
+                    model=excluded.model,
+                    version=excluded.version,
+                    dimensions=excluded.dimensions
+                """,
+                (profile_id, provider, model, version, dimensions, self._now_ms()),
+            )
+            self.conn.commit()
+
+    def mark_embedding_pending(self, memory_id: str, profile_id: str) -> None:
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                VALUES (?, ?, NULL, 'pending', 0, ?)
+                ON CONFLICT(memory_id, profile_id) DO UPDATE SET
+                    status=CASE
+                        WHEN memory_embeddings.status='ready' THEN 'ready'
+                        ELSE 'pending'
+                    END,
+                    updated_at=excluded.updated_at
+                """,
+                (memory_id, profile_id, self._now_ms()),
+            )
+            self.conn.commit()
+
+    def ensure_profile_pending(self, profile_id: str) -> None:
+        now = self._now_ms()
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                SELECT memory.id, ?, NULL, 'pending', 0, ?
+                FROM memories memory
+                WHERE memory.state='active'
+                  AND NOT EXISTS(
+                      SELECT 1 FROM memory_embeddings embedding
+                      WHERE embedding.memory_id=memory.id
+                        AND embedding.profile_id=?
+                  )
+                """,
+                (profile_id, now, profile_id),
+            )
+            self.conn.commit()
+
+    def pending_embedding_inputs(
+        self, profile_id: str, limit: int = 500
+    ) -> list[tuple[str, str]]:
+        rows = self.conn.execute(
+            """
+            SELECT memory.id, memory.content
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=?
+              AND embedding.status='pending'
+              AND memory.state='active'
+            ORDER BY embedding.updated_at, memory.created_at
+            LIMIT ?
+            """,
+            (profile_id, limit),
+        ).fetchall()
+        return [(row["id"], row["content"]) for row in rows]
+
+    def store_profile_embedding(
+        self, memory_id: str, profile_id: str, embedding: list[float]
+    ) -> None:
+        import struct
+
+        profile = self.conn.execute(
+            "SELECT dimensions FROM embedding_profiles WHERE profile_id=?",
+            (profile_id,),
+        ).fetchone()
+        if profile is None:
+            raise ValueError(f"unknown embedding profile: {profile_id}")
+        dimensions = int(profile["dimensions"])
+        if len(embedding) != dimensions:
+            raise ValueError(
+                f"embedding dimension mismatch: expected {dimensions}, got {len(embedding)}"
+            )
+        vector = struct.pack(f"<{dimensions}f", *embedding)
+        with self._write_lock:
+            self.conn.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, profile_id, vector, status, attempts, updated_at)
+                VALUES (?, ?, ?, 'ready', 0, ?)
+                ON CONFLICT(memory_id, profile_id) DO UPDATE SET
+                    vector=excluded.vector,
+                    status='ready',
+                    attempts=0,
+                    updated_at=excluded.updated_at
+                """,
+                (memory_id, profile_id, vector, self._now_ms()),
+            )
+            self.conn.execute(
+                "UPDATE memories SET embedding_ready=1 WHERE id=?", (memory_id,)
+            )
+            self.conn.commit()
+
+    def search_profile_embeddings(
+        self,
+        embedding: list[float],
+        profile_id: str,
+        current_project: str,
+        limit: int = 10,
+        include_expired: bool = False,
+    ) -> list[MemoryRow]:
+        import struct
+
+        profile = self.conn.execute(
+            "SELECT dimensions FROM embedding_profiles WHERE profile_id=?",
+            (profile_id,),
+        ).fetchone()
+        if profile is None or len(embedding) != int(profile["dimensions"]):
+            return []
+        validity = ""
+        params: list = [current_project, profile_id]
+        if not include_expired:
+            validity = (
+                "AND memory.state='active' "
+                "AND (memory.expires_at IS NULL OR memory.expires_at > ?)"
+            )
+            params.append(self._now_ms())
+        rows = self.conn.execute(
+            f"""
+            SELECT memory.*, embedding.vector,
+                   EXISTS(
+                       SELECT 1 FROM memory_sources source
+                       WHERE source.memory_id=memory.id
+                         AND source.project_id=? AND source.active=1
+                   ) AS current_project_source,
+                   COALESCE((
+                       SELECT MAX(source.importance) FROM memory_sources source
+                       WHERE source.memory_id=memory.id AND source.active=1
+                   ), memory.importance) AS source_importance
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=? AND embedding.status='ready'
+              {validity}
+            """,
+            params,
+        ).fetchall()
+        query_norm = sum(value * value for value in embedding) ** 0.5
+        if query_norm == 0:
+            return []
+        memories = []
+        dimensions = len(embedding)
+        for row in rows:
+            if row["vector"] is None:
+                continue
+            vector = struct.unpack(f"<{dimensions}f", row["vector"])
+            vector_norm = sum(value * value for value in vector) ** 0.5
+            if vector_norm == 0:
+                continue
+            score = sum(a * b for a, b in zip(embedding, vector)) / (
+                query_norm * vector_norm
+            )
+            if row["current_project_source"]:
+                score += 0.01
+            memory = self._row_to_memory(row, score=score)
+            memory.importance = row["source_importance"]
+            memories.append(memory)
+        memories.sort(key=lambda memory: memory.score, reverse=True)
+        return memories[:limit]
+
+    def count_profile_embeddings(self, profile_id: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM memory_embeddings embedding
+            JOIN memories memory ON memory.id=embedding.memory_id
+            WHERE embedding.profile_id=? AND embedding.status='ready'
+              AND memory.state='active'
+              AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+            """,
+            (profile_id, self._now_ms()),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def profile_embedding_coverage(self, profile_id: str) -> float:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN embedding.status='ready' THEN 1 ELSE 0 END) AS ready
+            FROM memories memory
+            LEFT JOIN memory_embeddings embedding
+              ON embedding.memory_id=memory.id AND embedding.profile_id=?
+            WHERE memory.state='active'
+              AND (memory.expires_at IS NULL OR memory.expires_at > ?)
+            """,
+            (profile_id, self._now_ms()),
+        ).fetchone()
+        total = int(row["total"] or 0) if row else 0
+        ready = int(row["ready"] or 0) if row else 0
+        return 1.0 if total == 0 else ready / total
+
     def update_embedding(self, memory_rowid: int, embedding: list[float]) -> None:
         if not self._vec_available:
             return
         import struct
+
         blob = struct.pack(f"{len(embedding)}f", *embedding)
         with self._write_lock:
             self.conn.execute(
@@ -444,8 +1375,7 @@ class EmbeddedStorage:
             ).fetchone()
             if row:
                 self.conn.execute(
-                    "DELETE FROM memories_fts WHERE rowid=?",
-                    (row["rowid"],)
+                    "DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],)
                 )
                 if self._vec_available:
                     self.conn.execute(
@@ -453,9 +1383,8 @@ class EmbeddedStorage:
                         (row["rowid"],),
                     )
                 self._delete_graph_edges_for_memory(memory_id)
-            cursor = self.conn.execute(
-                "DELETE FROM memories WHERE id=?", (memory_id,)
-            )
+            cursor = self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+            self._resolve_orphaned_conflicts(self.conn, self._now_ms())
             self.conn.commit()
         return cursor.rowcount > 0
 
@@ -474,34 +1403,28 @@ class EmbeddedStorage:
     def expire_working_memories(self, space: str) -> int:
         now = self._now_ms()
         with self._write_lock:
-            rows = self.conn.execute(
-                """
-                SELECT rowid, id FROM memories
-                WHERE space=?
-                  AND layer='working'
-                  AND expires_at IS NOT NULL
-                  AND expires_at < ?
-                """,
-                (space, now),
-            ).fetchall()
-            for row in rows:
-                self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],))
-                if self._vec_available:
-                    self.conn.execute(
-                        "DELETE FROM memory_vecs WHERE memory_rowid=?",
-                        (row["rowid"],),
-                    )
-                self._delete_graph_edges_for_memory(row["id"])
             cursor = self.conn.execute(
                 """
-                DELETE FROM memories
-                WHERE space=?
+                UPDATE memories
+                SET state='expired', valid_to=COALESCE(valid_to, expires_at),
+                    updated_at=MAX(updated_at, expires_at)
+                WHERE space=? AND state='active'
                   AND layer='working'
                   AND expires_at IS NOT NULL
                   AND expires_at < ?
                 """,
                 (space, now),
             )
+            self.conn.execute(
+                """
+                DELETE FROM memory_conflict_members
+                WHERE memory_id IN (
+                    SELECT id FROM memories WHERE space=? AND state='expired'
+                )
+                """,
+                (space,),
+            )
+            self._resolve_orphaned_conflicts(self.conn, now)
             self.conn.commit()
         return cursor.rowcount
 
@@ -523,13 +1446,16 @@ class EmbeddedStorage:
             updated_at=row["updated_at"],
         )
 
-    def refresh_briefing_cache(self, space: str, recent_limit: int = 8, important_limit: int = 5) -> BriefingData:
+    def refresh_briefing_cache(
+        self, space: str, recent_limit: int = 8, important_limit: int = 5
+    ) -> BriefingData:
         now = self._now_ms()
 
         recent_rows = self.conn.execute(
             """
             SELECT * FROM memories
-            WHERE space=? AND (expires_at IS NULL OR expires_at > ?)
+            WHERE space=? AND state='active'
+              AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY created_at DESC
             LIMIT ?
             """,
@@ -539,7 +1465,8 @@ class EmbeddedStorage:
         important_rows = self.conn.execute(
             """
             SELECT * FROM memories
-            WHERE space=? AND importance >= 1 AND (expires_at IS NULL OR expires_at > ?)
+            WHERE space=? AND state='active' AND importance >= 1
+              AND (expires_at IS NULL OR expires_at > ?)
             ORDER BY importance DESC, updated_at DESC
             LIMIT ?
             """,
@@ -547,28 +1474,31 @@ class EmbeddedStorage:
         ).fetchall()
 
         count_row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=?", (space,)
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND state='active'",
+            (space,),
         ).fetchone()
         total = count_row["cnt"] if count_row else 0
 
         def rows_to_dicts(rows: list) -> list[dict]:
             result = []
             for r in rows:
-                result.append({
-                    "id": r["id"],
-                    "content": r["content"],
-                    "space": r["space"],
-                    "layer": r["layer"],
-                    "memory_type": r["memory_type"],
-                    "role": r["role"],
-                    "importance": r["importance"],
-                    "tags": json.loads(r["tags"]),
-                    "meta": json.loads(r["meta"]),
-                    "created_at": r["created_at"],
-                    "updated_at": r["updated_at"],
-                    "expires_at": r["expires_at"],
-                    "embedding_ready": bool(r["embedding_ready"]),
-                })
+                result.append(
+                    {
+                        "id": r["id"],
+                        "content": r["content"],
+                        "space": r["space"],
+                        "layer": r["layer"],
+                        "memory_type": r["memory_type"],
+                        "role": r["role"],
+                        "importance": r["importance"],
+                        "tags": json.loads(r["tags"]),
+                        "meta": json.loads(r["meta"]),
+                        "created_at": r["created_at"],
+                        "updated_at": r["updated_at"],
+                        "expires_at": r["expires_at"],
+                        "embedding_ready": bool(r["embedding_ready"]),
+                    }
+                )
             return result
 
         recent_dicts = rows_to_dicts(recent_rows)
@@ -581,7 +1511,13 @@ class EmbeddedStorage:
                     (space, recent_json, important_json, memory_count, updated_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (space, json.dumps(recent_dicts), json.dumps(important_dicts), total, now),
+                (
+                    space,
+                    json.dumps(recent_dicts),
+                    json.dumps(important_dicts),
+                    total,
+                    now,
+                ),
             )
             self.conn.commit()
 
@@ -622,13 +1558,15 @@ class EmbeddedStorage:
 
     def get_stats(self, space: str) -> dict:
         rows = self.conn.execute(
-            "SELECT layer, COUNT(*) AS cnt FROM memories WHERE space=? GROUP BY layer",
+            "SELECT layer, COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' GROUP BY layer",
             (space,),
         ).fetchall()
         by_layer = {r["layer"]: r["cnt"] for r in rows}
 
         rows = self.conn.execute(
-            "SELECT memory_type, COUNT(*) AS cnt FROM memories WHERE space=? GROUP BY memory_type",
+            "SELECT memory_type, COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' GROUP BY memory_type",
             (space,),
         ).fetchall()
         by_type = {r["memory_type"]: r["cnt"] for r in rows}
@@ -638,7 +1576,7 @@ class EmbeddedStorage:
             SELECT COUNT(*) AS total_count,
                    MIN(created_at) AS oldest_at,
                    MAX(created_at) AS newest_at
-            FROM memories WHERE space=?
+            FROM memories WHERE space=? AND state='active'
             """,
             (space,),
         ).fetchone()
@@ -653,7 +1591,8 @@ class EmbeddedStorage:
 
     def count_embeddings(self, space: str) -> int:
         row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND embedding_ready=1",
+            "SELECT COUNT(*) AS cnt FROM memories "
+            "WHERE space=? AND state='active' AND embedding_ready=1",
             (space,),
         ).fetchone()
         return row["cnt"] if row else 0
@@ -664,7 +1603,7 @@ class EmbeddedStorage:
             SELECT COUNT(*) AS cnt
             FROM memories m
             JOIN memories_fts f ON m.rowid = f.rowid
-            WHERE m.space=?
+            WHERE m.space=? AND m.state='active'
             """,
             (space,),
         ).fetchone()
@@ -690,7 +1629,7 @@ class EmbeddedStorage:
             FROM (
                 SELECT content
                 FROM memories
-                WHERE space=?
+                WHERE space=? AND state='active'
                 GROUP BY content
                 HAVING COUNT(*) > 1
             )
@@ -709,7 +1648,7 @@ class EmbeddedStorage:
             (space,),
         ).fetchone()
         total_row = self.conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE space=?",
+            "SELECT COUNT(*) AS cnt FROM memories WHERE space=? AND state='active'",
             (space,),
         ).fetchone()
         try:
@@ -758,18 +1697,210 @@ class EmbeddedStorage:
     # Dedup helper
     # ------------------------------------------------------------------
 
-    def find_exact(self, content: str, space: str) -> "MemoryRow | None":
-        """Return an existing memory with identical content, or None."""
+    def find_exact(self, content: str, space: str | None = None) -> "MemoryRow | None":
+        """Return the global canonical memory with identical normalized content."""
+        del space
         row = self.conn.execute(
-            "SELECT * FROM memories WHERE content=? AND space=?"
+            "SELECT * FROM memories WHERE normalized_hash=? AND state='active'"
             " AND (expires_at IS NULL OR expires_at > ?)",
-            (content, space, self._now_ms()),
+            (_normalized_content_hash(content), self._now_ms()),
         ).fetchone()
         return self._row_to_memory(row) if row else None
 
     def update_memory_content(self, memory_id: str, new_content: str) -> None:
         """Update the content of an existing memory (used by fuzzy dedup merge)."""
         self.update_memory(memory_id, content=new_content)
+
+    def supersede_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str,
+        layer: str,
+        memory_type: str,
+        importance: int,
+        tags: list,
+        meta: dict,
+    ) -> "MemoryRow | None":
+        """Atomically replace an active memory while retaining its history."""
+        current = self.conn.execute(
+            "SELECT * FROM memories WHERE id=? AND state='active'", (memory_id,)
+        ).fetchone()
+        if current is None:
+            return None
+
+        normalized_hash = _normalized_content_hash(content)
+        current_hash = current["normalized_hash"] or _normalized_content_hash(
+            current["content"]
+        )
+        if normalized_hash == current_hash:
+            return self.update_memory(
+                memory_id,
+                content=content,
+                layer=layer,
+                memory_type=memory_type,
+                importance=importance,
+                tags=tags,
+                meta=meta,
+            )
+
+        now = self._now_ms()
+        replacement_id = str(uuid.uuid4())
+        tags_json = json.dumps(tags)
+        meta_json = json.dumps(meta)
+        expires_at = now + 24 * 3600 * 1000 if layer == "working" else None
+
+        with self._write_lock:
+            conn = self.conn
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                old = conn.execute(
+                    "SELECT rowid, * FROM memories WHERE id=? AND state='active'",
+                    (memory_id,),
+                ).fetchone()
+                if old is None:
+                    conn.rollback()
+                    return None
+
+                canonical = conn.execute(
+                    "SELECT rowid, * FROM memories "
+                    "WHERE normalized_hash=? AND state='active'",
+                    (normalized_hash,),
+                ).fetchone()
+                if canonical is None:
+                    conn.execute(
+                        """
+                        INSERT INTO memories
+                            (id, content, space, layer, memory_type, role, importance,
+                             tags, meta, created_at, updated_at, expires_at,
+                             embedding_ready, normalized_hash, state, valid_from,
+                             supersedes_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?,
+                                'active', ?, ?)
+                        """,
+                        (
+                            replacement_id,
+                            content,
+                            old["space"],
+                            layer,
+                            memory_type,
+                            old["role"],
+                            importance,
+                            tags_json,
+                            meta_json,
+                            now,
+                            now,
+                            expires_at,
+                            normalized_hash,
+                            now,
+                            memory_id,
+                        ),
+                    )
+                    replacement_rowid = conn.execute(
+                        "SELECT last_insert_rowid()"
+                    ).fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                        (replacement_rowid, _process_for_fts(content), tags_json),
+                    )
+                else:
+                    replacement_id = canonical["id"]
+                    conn.execute(
+                        """
+                        UPDATE memories
+                        SET layer=?, memory_type=?, importance=?, tags=?, meta=?,
+                            updated_at=?, expires_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            layer,
+                            memory_type,
+                            importance,
+                            tags_json,
+                            meta_json,
+                            now,
+                            expires_at,
+                            replacement_id,
+                        ),
+                    )
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE rowid=?", (canonical["rowid"],)
+                    )
+                    conn.execute(
+                        "INSERT INTO memories_fts(rowid, content, tags) VALUES (?, ?, ?)",
+                        (canonical["rowid"], _process_for_fts(content), tags_json),
+                    )
+
+                sources = conn.execute(
+                    "SELECT * FROM memory_sources WHERE memory_id=? AND active=1",
+                    (memory_id,),
+                ).fetchall()
+                for source in sources:
+                    self._attach_source_row(
+                        conn,
+                        memory_id=replacement_id,
+                        project_id=source["project_id"],
+                        workspace_id=source["workspace_id"],
+                        importance=source["importance"],
+                        tags_json=source["tags"],
+                        evidence=source["evidence"],
+                        meta_json=source["meta"],
+                        first_observed_at=source["first_observed_at"],
+                        last_observed_at=now,
+                    )
+                if not sources:
+                    self._attach_source_row(
+                        conn,
+                        memory_id=replacement_id,
+                        project_id=old["space"],
+                        workspace_id="",
+                        importance=importance,
+                        tags_json=tags_json,
+                        evidence=meta.get("evidence"),
+                        meta_json=meta_json,
+                        first_observed_at=now,
+                        last_observed_at=now,
+                    )
+
+                conn.execute(
+                    """
+                    UPDATE memory_sources
+                    SET importance=?, tags=?, evidence=?, meta=?, last_observed_at=?
+                    WHERE memory_id=? AND project_id=?
+                    """,
+                    (
+                        importance,
+                        tags_json,
+                        meta.get("evidence"),
+                        meta_json,
+                        now,
+                        replacement_id,
+                        old["space"],
+                    ),
+                )
+                conn.execute(
+                    """
+                    UPDATE memories
+                    SET state='superseded', valid_to=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (now, now, memory_id),
+                )
+                conn.execute(
+                    "DELETE FROM memory_conflict_members WHERE memory_id=?",
+                    (memory_id,),
+                )
+                self._resolve_orphaned_conflicts(conn, now)
+                self._delete_graph_edges_for_memory(memory_id)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        row = self.conn.execute(
+            "SELECT * FROM memories WHERE id=?", (replacement_id,)
+        ).fetchone()
+        return self._row_to_memory(row) if row else None
 
     def update_memory(
         self,
@@ -862,7 +1993,9 @@ class EmbeddedStorage:
     # Graph layer
     # ------------------------------------------------------------------
 
-    def upsert_graph_node(self, space: str, node_type: str, label: str, meta: dict = {}) -> str:
+    def upsert_graph_node(
+        self, space: str, node_type: str, label: str, meta: dict = {}
+    ) -> str:
         now = self._now_ms()
         existing = self.conn.execute(
             "SELECT id FROM graph_nodes WHERE space=? AND node_type=? AND label=?",
@@ -904,12 +2037,23 @@ class EmbeddedStorage:
                 INSERT INTO graph_edges (id, space, src_id, dst_id, edge_type, weight, meta, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (edge_id, space, src_id, dst_id, edge_type, weight, json.dumps(meta), now),
+                (
+                    edge_id,
+                    space,
+                    src_id,
+                    dst_id,
+                    edge_type,
+                    weight,
+                    json.dumps(meta),
+                    now,
+                ),
             )
             self.conn.commit()
         return edge_id
 
-    def link_memory_to_entities(self, memory_id: str, space: str, entities: list) -> None:
+    def link_memory_to_entities(
+        self, memory_id: str, space: str, entities: list
+    ) -> None:
         for entity in entities:
             node_id = self.upsert_graph_node(space, "entity", entity)
             self.add_graph_edge(
@@ -989,16 +2133,20 @@ class EmbeddedStorage:
                 if not memory_id:
                     continue
                 mem_row = self.conn.execute(
-                    "SELECT * FROM memories WHERE id=?", (memory_id,)
+                    "SELECT * FROM memories WHERE id=? AND state='active' "
+                    "AND (expires_at IS NULL OR expires_at > ?)",
+                    (memory_id, self._now_ms()),
                 ).fetchone()
                 if mem_row:
                     if mem_row["id"] in seen:
                         continue
                     seen.add(mem_row["id"])
-                    results.append({
-                        "entity": node["label"],
-                        "memory": self._row_to_memory(mem_row).to_dict(),
-                    })
+                    results.append(
+                        {
+                            "entity": node["label"],
+                            "memory": self._row_to_memory(mem_row).to_dict(),
+                        }
+                    )
         return results[:limit]
 
     def extract_entities_from_content(self, content: str) -> list:
@@ -1110,8 +2258,10 @@ class EmbeddedStorage:
 
     def reindex_graph(self, space: str | None = None) -> dict:
         """Rebuild graph nodes/edges from current memory content."""
-        params: tuple = (space,) if space else ()
-        where = "WHERE space=?" if space else ""
+        now = self._now_ms()
+        params: tuple = (space, now) if space else (now,)
+        where = "WHERE space=? AND" if space else "WHERE"
+        where += " state='active' AND (expires_at IS NULL OR expires_at > ?)"
         rows = self.conn.execute(
             f"SELECT id, content, space FROM memories {where}",
             params,
@@ -1149,7 +2299,10 @@ class EmbeddedStorage:
     # ------------------------------------------------------------------
 
     def export_memories(self, space: str, layer: str = None) -> list:
-        sql = "SELECT * FROM memories WHERE space=? AND (expires_at IS NULL OR expires_at > ?)"
+        sql = (
+            "SELECT * FROM memories WHERE space=? AND state='active' "
+            "AND (expires_at IS NULL OR expires_at > ?)"
+        )
         params = [space, self._now_ms()]
         if layer:
             sql += " AND layer=?"
@@ -1169,8 +2322,9 @@ class EmbeddedStorage:
     def compact_episodic(self, space: str, older_than_days: int = 30) -> dict:
         cutoff_ms = self._now_ms() - (older_than_days * 24 * 3600 * 1000)
         old_rows = self.conn.execute(
-            "SELECT * FROM memories WHERE space=? AND layer='episodic' AND created_at < ?",
-            (space, cutoff_ms)
+            "SELECT * FROM memories WHERE space=? AND state='active' "
+            "AND layer='episodic' AND created_at < ?",
+            (space, cutoff_ms),
         ).fetchall()
         if not old_rows:
             return {"summarized": 0, "created_id": None}
@@ -1178,8 +2332,7 @@ class EmbeddedStorage:
         summary_parts = [f"- {m.content}" for m in old_memories[:50]]
         summary = (
             f"Compacted {len(old_memories)} episodic memories"
-            f" (older than {older_than_days}d):\n"
-            + "\n".join(summary_parts)
+            f" (older than {older_than_days}d):\n" + "\n".join(summary_parts)
         )
         summary_memory = self.insert_memory(
             content=summary,
@@ -1202,7 +2355,9 @@ class EmbeddedStorage:
                     "SELECT rowid, content, tags FROM memories WHERE id=?", (m.id,)
                 ).fetchone()
                 if row:
-                    self.conn.execute("DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],))
+                    self.conn.execute(
+                        "DELETE FROM memories_fts WHERE rowid=?", (row["rowid"],)
+                    )
                     if self._vec_available:
                         self.conn.execute(
                             "DELETE FROM memory_vecs WHERE memory_rowid=?",
@@ -1243,7 +2398,8 @@ class EmbeddedStorage:
 
     def list_tags(self, space: str) -> list:
         rows = self.conn.execute(
-            "SELECT DISTINCT tags FROM memories WHERE space=? AND tags != '[]'", (space,)
+            "SELECT DISTINCT tags FROM memories WHERE space=? AND tags != '[]'",
+            (space,),
         ).fetchall()
         all_tags: set = set()
         for row in rows:

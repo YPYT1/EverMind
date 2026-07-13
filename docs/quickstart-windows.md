@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.11 or newer — https://www.python.org/downloads/
+- Python 3.12 or newer — https://www.python.org/downloads/
 - Git — https://git-scm.com/download/win
 
 ## 1. Clone
@@ -19,7 +19,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 ```
 
 The script will:
-- Check Python 3.11+ and uv (offers to install uv if missing)
+- Check Python 3.12+ and uv (offers to install uv if missing)
 - Install EverMind and all dependencies (`uv sync --extra full`)
 - Auto-configure Claude Desktop and Cursor MCP configs
 - Tell you how to add the `$evermind` skill to your project
@@ -65,14 +65,11 @@ If you prefer to configure manually instead of using the setup script, add this 
 
 Replace `C:\\path\\to\\EverMind` with your actual clone path.
 
-## Enable Vector Search (optional, recommended)
+## Semantic Search
 
-```powershell
-cd EverMind\mcp
-uv pip install sqlite-vec sentence-transformers
-```
-
-Without this, EverMind uses keyword search only. With it, `recall()` uses hybrid BM25 + semantic search for significantly better results.
+The bundled multilingual model provides offline English and Chinese semantic
+retrieval by default. A configured external embedding or rerank API is preferred
+while healthy; EverMind falls back to the local profile on failure.
 
 ## Troubleshooting
 

@@ -21,7 +21,6 @@
 | [MCP 工具](mcp-tools.md) | agent 能调用哪些工具，以及什么时候用。 |
 | [Skills](skills.md) | EverMind skills 如何约束 agent 的记忆行为。 |
 | [写入策略](write-policy.md) | 哪些内容自动写、哪些生成候选、哪些禁止落库。 |
-| [本地到云路线图](local-to-cloud-roadmap.md) | 未来云记忆模式和 v1 本地优先边界。 |
 
 ## 运维与排障
 

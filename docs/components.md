@@ -4,7 +4,7 @@ EverMind v2 consists of three components:
 
 ## EverMind MCP Server
 
-The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI client via `uv run`. It exposes 42 tools over stdio transport: memory, codebase graph, and archive tools.
+The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI client via `uv run`. It exposes 50 tools over stdio: 14 memory, 13 code graph, 20 local Basic Memory, 2 reviewed archive update, and 1 unified project lifecycle tool.
 
 **Entry point**: `evermind_mcp.server_v2:main_sync`
 
@@ -12,12 +12,13 @@ The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI c
 - `server_v2.py` — unified MCP server and tool dispatch
 - `memory_service_v2.py` — business logic: remember, recall, briefing, dedup
 - `storage.py` — SQLite + FTS5 + sqlite-vec storage layer
-- `codebase_engine.py` — Codebase Memory CLI bridge
-- `archive_bridge.py` — Basic Memory CLI/candidate bridge
-- `tool_bridge.py` — subprocess JSON/text command bridge
-- `embedding.py` — optional local sentence-transformers with background queue
+- `codebase_engine.py` — built-in EverMind source-fused code graph engine
+- `archive_engine.py` — reviewed archive candidate workflow
+- `provider_boundary.py` — enforces the local-only runtime boundary
+- `tool_errors.py` — shared machine-readable error envelopes
+- `embedding.py` — bundled local multilingual embeddings with optional external enhancement
 - `project_detector.py` — git remote → project slug auto-detection
-- `config_v2.py` — zero-config loader, 4 optional env vars
+- `config_v2.py` — zero-config local runtime loader
 - `types_v2.py` — shared dataclasses (MemoryRow, BriefingData)
 
 ## Skills
@@ -32,11 +33,11 @@ Available skills:
 
 ## Code Graph and Archive Engines
 
-EverMind exposes Codebase Memory and Basic Memory through the same MCP server. The code graph bridge calls the bundled `codebase-memory-mcp` executable. The archive bridge calls the installed `basic-memory` CLI and keeps Basic Memory writes behind the candidate/confirmation workflow.
+EverMind exposes code graph and archive capabilities through the same MCP server. The local code graph engine uses the vendored MIT `codebase-memory-mcp` source and internal binary for tree-sitter and Hybrid-LSP graph extraction. Official bundles reject an incomplete engine instead of silently using the Python fallback. Local Basic Memory tools execute in process from `third_party/basic-memory`; the two EverMind archive update tools retain the candidate/confirmation workflow. Users do not need PATH-installed Basic Memory or codebase-memory services.
 
 ## Storage
 
-One SQLite file per project: `~/.evermind/<project-slug>.db`
+One shared local catalog: `~/.evermind/catalog.db`
 
 Tables:
 - `memories` — all stored memories with layer/type/importance metadata

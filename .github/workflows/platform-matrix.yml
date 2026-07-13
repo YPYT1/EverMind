@@ -1,0 +1,125 @@
+name: Platform matrix
+
+on:
+  push:
+    branches: [main, experiment/local-source-fusion]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_runtime:
+        description: Build and upload complete runtime bundles
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            python_arch: x64
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            python_arch: arm64
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            python_arch: x64
+          - platform: macos-aarch64
+            runner: macos-15
+            python_arch: arm64
+          - platform: windows-x86_64
+            runner: windows-2025
+            python_arch: x64
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v6.3.0
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install locked local runtime
+        run: uv sync --frozen --directory mcp --group dev --extra full
+
+      - name: Lint
+        run: uv run --frozen --directory mcp ruff check
+
+      - name: Verify release and source bundle contracts
+        run: >-
+          uv run --frozen --directory mcp pytest
+          tests/test_release_consistency.py
+          tests/test_package_source_bundle.py
+          tests/test_release_source_bundle.py
+          tests/test_retrieval_quality.py::test_model_manifest_pins_artifact_license_dimensions_and_corpus
+          -q
+
+      - name: Verify platform setup contracts
+        run: >-
+          uv run --frozen --directory mcp pytest
+          ../tests/test_integrated_stack.py
+          -q -k "platform_ci or require_python_312 or powershell_syntax"
+
+      - name: Install Windows C toolchain
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        uses: msys2/setup-msys2@v2.32.0
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+
+      - name: Export Windows C toolchain paths
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: msys2 {0}
+        run: |
+          echo "$(cygpath -w /ucrt64/bin)" >> "$GITHUB_PATH"
+          echo "$(cygpath -w /usr/bin)" >> "$GITHUB_PATH"
+
+      - name: Build Windows runtime bundle
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: pwsh
+        run: >-
+          ./scripts/release-runtime.ps1
+          -ProjectRoot $PWD
+          -OutputDirectory (Join-Path $PWD 'dist/runtime')
+          -Target '${{ matrix.platform }}'
+
+      - name: Build Unix runtime bundle
+        if: runner.os != 'Windows' && github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        shell: bash
+        run: >-
+          bash scripts/release-runtime.sh
+          --project-root "$GITHUB_WORKSPACE"
+          --output-directory "$GITHUB_WORKSPACE/dist/runtime"
+          --target '${{ matrix.platform }}'
+
+      - name: Verify bundled runtime
+        if: github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        run: >-
+          uv run --frozen --directory mcp python -m scripts.verify_runtime_archive
+          --archive-directory ../dist/runtime
+          --timeout 300
+
+      - name: Upload runtime bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.build_runtime
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: EverMind-${{ matrix.platform }}
+          path: dist/runtime/*
+          compression-level: 0
+          retention-days: 7

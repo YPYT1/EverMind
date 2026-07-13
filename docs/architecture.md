@@ -38,7 +38,7 @@ EverMind is a two-component system: an MCP server that provides memory tools, an
 
 ### MCP Server (`mcp/src/evermind_mcp/`)
 
-The MCP server is a Python package started by the AI client via `uv run`. It exposes 42 unified tools:
+The MCP server is a Python package started by the AI client via `uv run`. It exposes 50 unified tools:
 
 - `briefing(fast=true)` — load session context from pre-materialized cache without blocking on LLM summary
 - `remember(content, importance)` — store to SQLite with auto type detection
@@ -50,8 +50,9 @@ The MCP server is a Python package started by the AI client via `uv run`. It exp
 - `status()` / `health()` — inspect counts, coverage, latency, and model health
 - `export(format, layer)` / `compact(older_than_days)` — audit and summarize memory
 - `tags()` / `reindex(all_spaces)` / `list_spaces()` — maintain indexes and multi-project state
-- Codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc.) — explore code through the bundled Codebase Memory engine
-- Archive tools (`search_notes`, `read_note`, `write_note`, `propose_basic_memory_update`, etc.) — bridge reviewed Basic Memory project notes
+- Codebase tools (`index_repository`, `get_architecture`, `search_code`, `search_graph`, `trace_path`, etc.) — explore code through the vendored MIT codebase-memory-mcp tree-sitter/Hybrid-LSP backend; official bundles require its verified internal binary
+- Basic Memory tools (`search_notes`, `read_note`, `write_note`, `canvas`, `fetch`, etc.) — execute the vendored local Basic Memory source in process
+- Reviewed archive tools (`propose_basic_memory_update`, `commit_basic_memory_update`) — stage and confirm archive project updates
 
 No external service. No HTTP. No API keys needed for basic use; embedding, rerank, and LLM summaries are optional.
 
@@ -66,9 +67,9 @@ Skills are separate from the MCP server — they shape behavior, not capability.
 
 ### Storage
 
-One SQLite file per project: `~/.evermind/<project-slug>.db`
+One shared local catalog: `~/.evermind/catalog.db`
 
-Project slug is auto-detected from `git remote get-url origin`.
+Logical projects and repository workspaces keep stable IDs. Project provenance affects ranking, not read visibility.
 
 Tables: `memories`, `memories_fts` (FTS5), `memory_vecs` (sqlite-vec, optional), `graph_nodes`, `graph_edges`, `event_log`, `briefing_cache`.
 

@@ -3,29 +3,39 @@ name = "evermind-mcp"
 version = "2.0.0"
 description = "EverMind v2 — MCP server for local AI memory. 6-layer persistent recall with graph, zero config. No cloud, no external service."
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 authors = [
     {name = "EverMind Contributors"}
 ]
 keywords = ["mcp", "memory", "ai", "claude", "cursor", "coding", "local-first", "sqlite"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    "basic-memory",
+    "mcp==1.26.0",
+    "fastmcp==3.3.1",
     "python-dotenv>=1.0.0",
+    "sentence-transformers==5.6.0",
 ]
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[tool.uv.sources]
+basic-memory = { path = "../third_party/basic-memory", editable = true }
 
 [project.optional-dependencies]
 vector = ["sqlite-vec>=0.1.6"]
-embedding = ["sentence-transformers>=3.0"]
+embedding = []
 chinese = ["jieba>=0.42"]
-full = ["sqlite-vec>=0.1.6", "sentence-transformers>=3.0", "jieba>=0.42"]
+full = ["sqlite-vec>=0.1.6", "jieba>=0.42"]
 
 [project.urls]
 Homepage = "https://github.com/YPYT1/EverMind"
@@ -52,7 +62,7 @@ markers = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 [dependency-groups]
 dev = [
