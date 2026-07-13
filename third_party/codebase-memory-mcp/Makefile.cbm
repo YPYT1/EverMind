@@ -307,8 +307,12 @@ ZLIB_SRCS = \
     vendored/zlib/zutil.c
 ZLIB_OBJS_TEST = $(patsubst vendored/zlib/%.c,$(BUILD_DIR)/test_zlib_%.o,$(ZLIB_SRCS))
 ZLIB_OBJS_PROD = $(patsubst vendored/zlib/%.c,$(BUILD_DIR)/prod_zlib_%.o,$(ZLIB_SRCS))
-ZLIB_CFLAGS_TEST = -std=c11 -g -O1 $(SANITIZE) -w -Ivendored/zlib
-ZLIB_CFLAGS_PROD = -std=c11 -O2 -w -Ivendored/zlib
+ZLIB_POSIX_CFLAGS := -DHAVE_UNISTD_H=1
+ifeq ($(IS_MINGW),yes)
+ZLIB_POSIX_CFLAGS :=
+endif
+ZLIB_CFLAGS_TEST = -std=c11 -g -O1 $(SANITIZE) -w -Ivendored/zlib $(ZLIB_POSIX_CFLAGS)
+ZLIB_CFLAGS_PROD = -std=c11 -O2 -w -Ivendored/zlib $(ZLIB_POSIX_CFLAGS)
 
 # TRE regex (vendored, Windows only — POSIX uses system <regex.h>)
 TRE_SRC = vendored/tre/tre_all.c

@@ -248,6 +248,20 @@ def test_runtime_release_wrappers_build_engine_and_call_shared_orchestrator() ->
     assert "--target" in unix
 
 
+def test_vendored_zlib_build_configures_unistd_on_posix() -> None:
+    makefile = (
+        ROOT / "third_party" / "codebase-memory-mcp" / "Makefile.cbm"
+    ).read_text(encoding="utf-8")
+
+    assert "ZLIB_POSIX_CFLAGS := -DHAVE_UNISTD_H=1" in makefile
+    assert "ifeq ($(IS_MINGW),yes)\nZLIB_POSIX_CFLAGS :=" in makefile
+    for variable in ["ZLIB_CFLAGS_TEST", "ZLIB_CFLAGS_PROD"]:
+        definition = next(
+            line for line in makefile.splitlines() if line.startswith(f"{variable} =")
+        )
+        assert "$(ZLIB_POSIX_CFLAGS)" in definition
+
+
 def test_unix_runtime_release_project_root_controls_default_output(
     tmp_path: Path,
 ) -> None:
@@ -785,5 +799,4 @@ def test_mcp_interface_pytest_suite_passes() -> None:
         timeout=300,
     )
     assert "passed" in result.stdout
-
 
