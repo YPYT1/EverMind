@@ -202,7 +202,6 @@ importance=2: permanent archive (architecture decisions, critical bugs)
 - [Windows 快速開始](docs/quickstart-windows.md)
 - [macOS 快速開始](docs/quickstart-macos.md)
 - [故障排除](docs/troubleshooting.md)
-- [v2 重設計方案](docs/v2-redesign.md)
 
 ---
 

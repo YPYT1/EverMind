@@ -21,7 +21,6 @@ This directory is the complete user and maintainer documentation for EverMind.
 | [MCP Tools](mcp-tools.md) | The tools exposed to agents and when to use each one. |
 | [Skills](skills.md) | How EverMind skills shape agent behavior. |
 | [Agent Instructions](agents.md) | How to configure agents to use EverMind. |
-| [v2 Redesign Notes](v2-redesign.md) | Design decisions and changes introduced in v2. |
 | [Write Policy](write-policy.md) | Which facts are stored automatically, proposed for review, or blocked. |
 
 ## Operations
