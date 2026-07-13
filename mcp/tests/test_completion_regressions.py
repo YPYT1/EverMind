@@ -6,6 +6,7 @@ import hashlib
 import json
 import multiprocessing
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -595,6 +596,17 @@ def test_interrupted_legacy_migration_resumes_from_durable_memory_map(
     monkeypatch.setattr(migrator, "_import_graph", crash_after_memories)
     with pytest.raises(RuntimeError, match="injected migration interruption"):
         migrator.migrate()
+    with sqlite3.connect(
+        f"file:{config.legacy_db_path('coding:resume').as_posix()}?mode=ro",
+        uri=True,
+    ) as legacy_read:
+        assert (
+            legacy_read.execute(
+                "SELECT COUNT(*) FROM memories WHERE content=?",
+                ("interrupted migration memory",),
+            ).fetchone()[0]
+            == 1
+        )
     assert catalog.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 1
     assert (
         catalog.conn.execute("SELECT COUNT(*) FROM legacy_memory_map").fetchone()[0]
@@ -629,6 +641,54 @@ def test_interrupted_legacy_migration_resumes_from_durable_memory_map(
         )
     finally:
         recovered.close_all()
+
+
+def test_completed_legacy_migration_ignores_stale_legacy_writes(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path, space="coding:cutover")
+    config.home.mkdir(parents=True)
+    legacy_path = config.legacy_db_path(config.default_space)
+    legacy = EmbeddedStorage(legacy_path)
+    legacy.insert_memory(
+        config.default_space,
+        "memory imported before catalog cutover",
+        importance=1,
+    )
+    legacy.close_all()
+
+    migrated = MemoryService(config)
+    try:
+        assert migrated.storage.get_meta("legacy_migration_complete_v1")
+    finally:
+        migrated.close()
+
+    stale = EmbeddedStorage(legacy_path)
+    stale.insert_memory(
+        config.default_space,
+        "stale legacy write after catalog cutover",
+        importance=1,
+    )
+    stale.close_all()
+
+    restarted = MemoryService(config)
+    try:
+        assert (
+            restarted.storage.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE content=?",
+                ("memory imported before catalog cutover",),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            restarted.storage.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE content=?",
+                ("stale legacy write after catalog cutover",),
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        restarted.close()
 
 
 def test_unified_project_resolver_normalizes_remotes_and_isolates_workspaces(

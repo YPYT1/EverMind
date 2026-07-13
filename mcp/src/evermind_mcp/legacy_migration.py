@@ -20,6 +20,8 @@ class LegacyCatalogMigrator:
         self.catalog_path = Path(storage._db_path).resolve()
 
     def migrate(self) -> None:
+        if self.storage.get_meta("legacy_migration_complete_v1") is not None:
+            return
         sources = [
             path
             for path in sorted(self.home.glob("*.db"))
