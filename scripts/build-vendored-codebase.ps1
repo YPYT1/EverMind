@@ -45,12 +45,12 @@ Add-FirstExistingPath @(
 ) | Out-Null
 Add-PathIfExists "C:\Program Files\LLVM\bin"
 Add-PathIfExists "$env:LOCALAPPDATA\Microsoft\WinGet\Links"
-$unixTools = Add-FirstExistingPath @(
+Add-FirstExistingPath @(
   "C:\Program Files\Git\usr\bin",
   "C:\Program Files (x86)\Git\usr\bin",
   "D:\Develor_TOOl\Git\usr\bin",
   "C:\msys64\usr\bin"
-)
+) | Out-Null
 
 $source = Join-Path $ProjectRoot "third_party\codebase-memory-mcp"
 $makefile = Join-Path $source "Makefile.cbm"
@@ -85,10 +85,7 @@ Info "Building vendored codebase-memory-mcp from source"
 Push-Location $source
 try {
   $makeArgs = @("-f", "Makefile.cbm")
-  if ($unixTools) {
-    $shellPath = (Join-Path $unixTools "sh.exe").Replace("\", "/")
-    $makeArgs += "SHELL=$shellPath"
-  }
+  $makeArgs += "SHELL=sh.exe"
   if ($compiler.Name -like "gcc*") {
     $makeArgs += "CC=gcc"
     if (Get-Command g++ -ErrorAction SilentlyContinue) {

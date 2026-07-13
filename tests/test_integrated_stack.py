@@ -266,6 +266,15 @@ def test_vendored_zlib_build_configures_unistd_on_posix() -> None:
         assert "$(ZLIB_POSIX_CFLAGS)" in definition
 
 
+def test_windows_codebase_build_uses_shell_name_from_path() -> None:
+    script = (ROOT / "scripts" / "build-vendored-codebase.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '$makeArgs += "SHELL=sh.exe"' in script
+    assert "SHELL=$shellPath" not in script
+
+
 def test_unix_runtime_release_project_root_controls_default_output(
     tmp_path: Path,
 ) -> None:
