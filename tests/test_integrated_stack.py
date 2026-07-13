@@ -723,6 +723,26 @@ def test_vendored_codebase_memory_source_is_integrated() -> None:
     assert "-lz" not in makefile
 
 
+def test_lean_parser_chunks_preserve_repository_bytes() -> None:
+    chunks = (
+        ROOT
+        / "third_party"
+        / "codebase-memory-mcp"
+        / "internal"
+        / "cbm"
+        / "vendored"
+        / "grammars"
+        / "lean"
+        / "parser.c.chunks"
+    )
+    parts = sorted(chunks.glob("parser.c.part*"))
+
+    for part in [parts[0], parts[-1]]:
+        relative = part.relative_to(ROOT).as_posix()
+        result = run(["git", "check-attr", "text", "--", relative])
+        assert result.stdout.strip().endswith(": text: unset")
+
+
 def test_vendored_source_has_no_plain_git_files_over_github_limit() -> None:
     restored_lean_parser = ROOT / "third_party" / "codebase-memory-mcp" / "internal" / "cbm" / "vendored" / "grammars" / "lean" / "parser.c"
     oversized = [
@@ -799,4 +819,3 @@ def test_mcp_interface_pytest_suite_passes() -> None:
         timeout=300,
     )
     assert "passed" in result.stdout
-
