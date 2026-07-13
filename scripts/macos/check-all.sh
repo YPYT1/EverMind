@@ -79,7 +79,7 @@ fi
 CANDIDATE_DIR="$(printf '%s\n' "$ENV_TEXT" | sed -n 's/^EVERMIND_ARCHIVE_CANDIDATE_DIR=//p' | head -n 1)"
 [[ -n "$CANDIDATE_DIR" && -d "$CANDIDATE_DIR" ]] && pass "EverMind Archive candidate dir exists" || warn "EverMind Archive candidate dir missing"
 
-for name in EVEROS_LLM__API_KEY EVEROS_MULTIMODAL__API_KEY EVEROS_EMBEDDING__API_KEY EVEROS_RERANK__API_KEY; do
+for name in EVERMIND_SILICONFLOW_API_KEY; do
   if grep -q "^$name=." "$ENV_FILE" 2>/dev/null; then
     pass "$name is set"
   else

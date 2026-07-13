@@ -139,12 +139,7 @@ if ($envText -match "(?m)^EVERMIND_ARCHIVE_CANDIDATE_DIR=(.+)$") {
   Warn "EVERMIND_ARCHIVE_CANDIDATE_DIR missing from .env"
 }
 
-$modelVars = @(
-  "EVEROS_LLM__API_KEY",
-  "EVEROS_MULTIMODAL__API_KEY",
-  "EVEROS_EMBEDDING__API_KEY",
-  "EVEROS_RERANK__API_KEY"
-)
+$modelVars = @("EVERMIND_SILICONFLOW_API_KEY")
 foreach ($name in $modelVars) {
   if ($envText -match "(?m)^$name=.+$") { Pass "$name is set" } else { Info "$name is empty; model-backed features remain optional" }
 }

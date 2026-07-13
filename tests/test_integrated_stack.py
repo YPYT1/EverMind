@@ -208,8 +208,6 @@ def test_required_user_setup_scripts_exist() -> None:
         "scripts/windows/configure.ps1",
         "scripts/windows/setup-user.ps1",
         "scripts/windows/start-mcp.ps1",
-        "scripts/windows/start-everos.ps1",
-        "scripts/windows/install-everos-nssm.ps1",
         "scripts/macos/bootstrap.sh",
         "scripts/macos/install.sh",
         "scripts/macos/install-all.sh",
@@ -218,7 +216,6 @@ def test_required_user_setup_scripts_exist() -> None:
         "scripts/macos/configure.sh",
         "scripts/macos/setup-user.sh",
         "scripts/macos/start-mcp.sh",
-        "scripts/macos/start-everos.sh",
     ]
     missing = [item for item in expected if not (ROOT / item).exists()]
     assert missing == []
@@ -572,8 +569,6 @@ def test_render_configs_updates_env_file(tmp_path: Path) -> None:
             str(env_file),
             "--evermind-home",
             str(tmp_path / "home"),
-            "--everos-root",
-            str(tmp_path / "home" / "everos"),
             "--archive-root",
             str(tmp_path / "basic"),
             "--archive-candidate-dir",
@@ -583,7 +578,6 @@ def test_render_configs_updates_env_file(tmp_path: Path) -> None:
     assert result.returncode == 0
     rendered = env_file.read_text(encoding="utf-8")
     assert f"EVERMIND_HOME={tmp_path / 'home'}" in rendered
-    assert f"EVEROS_ROOT={tmp_path / 'home' / 'everos'}" in rendered
     assert f"EVERMIND_ARCHIVE_ROOT={tmp_path / 'basic'}" in rendered
     assert f"EVERMIND_ARCHIVE_CANDIDATE_DIR={tmp_path / 'basic' / '.candidates'}" in rendered
 
@@ -621,7 +615,6 @@ def test_windows_install_all_skip_install_generates_local_config(tmp_path: Path)
         encoding="utf-8-sig"
     )
     assert "<EVERMIND_ROOT>" not in rendered
-    assert "<EVEROS_ROOT>" not in rendered
     assert "<EVERMIND_ARCHIVE_ROOT>" not in rendered
 
 
@@ -651,10 +644,8 @@ def test_windows_configure_noninteractive_generates_user_assets(tmp_path: Path) 
             str(user_home),
             "-EverMindHome",
             str(tmp_path / "EverMindMemory"),
-            "-LlmApiKey",
-            "dummy-llm",
-            "-EmbeddingApiKey",
-            "dummy-embedding",
+            "-SiliconFlowApiKey",
+            "dummy-siliconflow",
         ],
         cwd=project_root,
         timeout=90,
@@ -663,8 +654,7 @@ def test_windows_configure_noninteractive_generates_user_assets(tmp_path: Path) 
     assert "Configuration complete" in result.stdout
     assert env_file.exists()
     env_text = env_file.read_text(encoding="utf-8")
-    assert "EVEROS_LLM__API_KEY=dummy-llm" in env_text
-    assert "EVEROS_EMBEDDING__API_KEY=dummy-embedding" in env_text
+    assert "EVERMIND_SILICONFLOW_API_KEY=dummy-siliconflow" in env_text
     assert (generated / "mcp-config" / "codex.toml").exists()
     assert (user_home / ".agents" / "skills" / "evermind" / "SKILL.md").exists()
 
@@ -795,14 +785,9 @@ def test_windows_full_stack_check_connectivity_with_dummy_model_keys(tmp_path: P
         timeout=90,
     )
     text = env_file.read_text(encoding="utf-8")
-    for key in [
-        "EVEROS_LLM__API_KEY",
-        "EVEROS_MULTIMODAL__API_KEY",
-        "EVEROS_EMBEDDING__API_KEY",
-        "EVEROS_RERANK__API_KEY",
-    ]:
-        text = text.replace(f"# {key}=", f"{key}=dummy-local-check")
-        text = text.replace(f"{key}=", f"{key}=dummy-local-check")
+    key = "EVERMIND_SILICONFLOW_API_KEY"
+    text = text.replace(f"# {key}=", f"{key}=dummy-local-check")
+    text = text.replace(f"{key}=", f"{key}=dummy-local-check")
     env_file.write_text(text, encoding="utf-8")
 
     result = run(

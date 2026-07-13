@@ -26,7 +26,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--evermind-home", required=True)
-    parser.add_argument("--everos-root", required=True)
     parser.add_argument("--archive-root", required=True)
     parser.add_argument("--archive-candidate-dir", required=True)
     args = parser.parse_args()
@@ -35,7 +34,6 @@ def main() -> None:
     text = path.read_text(encoding="utf-8")
     replacements = {
         "EVERMIND_HOME": args.evermind_home,
-        "EVEROS_ROOT": args.everos_root,
         "EVERMIND_ARCHIVE_ROOT": args.archive_root,
         "EVERMIND_ARCHIVE_CANDIDATE_DIR": args.archive_candidate_dir,
     }

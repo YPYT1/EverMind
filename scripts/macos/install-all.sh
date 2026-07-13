@@ -3,7 +3,6 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 EVERMIND_HOME="${EVERMIND_HOME:-$HOME/.evermind}"
-EVEROS_ROOT="$EVERMIND_HOME/everos"
 EVERMIND_ARCHIVE_ROOT="${EVERMIND_ARCHIVE_ROOT:-$HOME/BasicMemory}"
 SKIP_TOOLCHAIN_INSTALL="${SKIP_TOOLCHAIN_INSTALL:-0}"
 
@@ -14,12 +13,11 @@ render_file() {
   local source="$1"
   local dest="$2"
   mkdir -p "$(dirname "$dest")"
-  python3 - "$source" "$dest" "$PROJECT_ROOT" "$EVEROS_ROOT" "$EVERMIND_ARCHIVE_ROOT" <<'PY'
+  python3 - "$source" "$dest" "$PROJECT_ROOT" "$EVERMIND_ARCHIVE_ROOT" <<'PY'
 import sys
-source, dest, evermind, everos, basic = sys.argv[1:]
+source, dest, evermind, basic = sys.argv[1:]
 text = open(source, encoding="utf-8").read()
 text = text.replace("<EVERMIND_ROOT>", evermind)
-text = text.replace("<EVEROS_ROOT>", everos)
 text = text.replace("<EVERMIND_ARCHIVE_ROOT>", basic)
 open(dest, "w", encoding="utf-8").write(text)
 PY
@@ -34,7 +32,6 @@ bash "$PROJECT_ROOT/scripts/build-vendored-codebase.sh" --best-effort
 python3 "$PROJECT_ROOT/scripts/common/render-configs.py" \
   --env-file "$PROJECT_ROOT/.env" \
   --evermind-home "$EVERMIND_HOME" \
-  --everos-root "$EVEROS_ROOT" \
   --archive-root "$EVERMIND_ARCHIVE_ROOT" \
   --archive-candidate-dir "$EVERMIND_ARCHIVE_ROOT/.candidates"
 

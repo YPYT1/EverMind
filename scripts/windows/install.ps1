@@ -5,18 +5,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$everosRoot = Join-Path $EverMindHome "everos"
 $basicRoot = Join-Path $EverMindHome "evermind-archive"
 $candidateDir = Join-Path $basicRoot ".candidates"
 
-New-Item -ItemType Directory -Force -Path $everosRoot, $basicRoot, $candidateDir | Out-Null
+New-Item -ItemType Directory -Force -Path $EverMindHome, $basicRoot, $candidateDir | Out-Null
 
 $envPath = Join-Path $ProjectRoot ".env"
 if (-not (Test-Path -LiteralPath $envPath)) {
   Copy-Item -LiteralPath (Join-Path $ProjectRoot ".env.example") -Destination $envPath
   $text = Get-Content -LiteralPath $envPath -Raw
   $text = $text -replace "(?m)^#?\s*EVERMIND_HOME=.*$", "EVERMIND_HOME=$EverMindHome"
-  $text = $text -replace "(?m)^#?\s*EVEROS_ROOT=.*$", "EVEROS_ROOT=$everosRoot"
   $text = $text -replace "(?m)^#?\s*EVERMIND_ARCHIVE_ROOT=.*$", "EVERMIND_ARCHIVE_ROOT=$basicRoot"
   $text = $text -replace "(?m)^#?\s*EVERMIND_ARCHIVE_CANDIDATE_DIR=.*$", "EVERMIND_ARCHIVE_CANDIDATE_DIR=$candidateDir"
   Set-Content -LiteralPath $envPath -Value $text -Encoding UTF8

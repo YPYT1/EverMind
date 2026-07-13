@@ -25,7 +25,6 @@ function Render-File {
 
 & (Join-Path $PSScriptRoot "install.ps1") -EverMindHome $EverMindHome -ProjectRoot $ProjectRoot
 
-$everosRoot = Join-Path $EverMindHome "everos"
 $basicRoot = Join-Path $EverMindHome "evermind-archive"
 Info "Using EverMind built-in local archive and code graph engines."
 if (-not $SkipToolchainInstall) {
@@ -36,7 +35,6 @@ if (-not $SkipToolchainInstall) {
 $generated = Join-Path $ProjectRoot "generated\mcp-config"
 $values = @{
   "<EVERMIND_ROOT>" = $ProjectRoot.Replace("\", "/")
-  "<EVEROS_ROOT>" = $everosRoot.Replace("\", "/")
   "<EVERMIND_ARCHIVE_ROOT>" = $basicRoot.Replace("\", "/")
 }
 
