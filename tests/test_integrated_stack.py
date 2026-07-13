@@ -449,11 +449,9 @@ def test_unified_config_defines_write_policy_and_router() -> None:
         assert section in config
 
 
-def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
+def test_docs_explain_integrated_components_and_local_only_boundary() -> None:
     components = (ROOT / "docs" / "components.md").read_text(encoding="utf-8")
-    roadmap = (ROOT / "docs" / "local-to-cloud-roadmap.md").read_text(
-        encoding="utf-8"
-    )
+    security = (ROOT / "docs" / "security.md").read_text(encoding="utf-8")
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     for phrase in [
         "EverMind MCP",
@@ -468,8 +466,8 @@ def test_docs_explain_integrated_components_and_cloud_roadmap() -> None:
     assert "MCP Server" in architecture
     assert "Storage" in architecture
     assert "50 unified tools" in architecture
-    assert "EVERMIND_MEMORY_MODE=local" in roadmap
-    assert "EVERMIND_SYNC_MODE=off" in roadmap
+    assert "local-only runtime boundary" in components
+    assert "uses MCP stdio and does not start a network listener" in security
 
 
 def test_readme_explains_value_principles_and_folded_commands() -> None:

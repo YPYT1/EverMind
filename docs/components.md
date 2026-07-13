@@ -14,11 +14,11 @@ The MCP server is a Python package (`mcp/src/evermind_mcp/`) started by the AI c
 - `storage.py` — SQLite + FTS5 + sqlite-vec storage layer
 - `codebase_engine.py` — built-in EverMind source-fused code graph engine
 - `archive_engine.py` — reviewed archive candidate workflow
-- `provider_boundary.py` — explicit local/cloud provider boundary for future modes
+- `provider_boundary.py` — enforces the local-only runtime boundary
 - `tool_errors.py` — shared machine-readable error envelopes
 - `embedding.py` — bundled local multilingual embeddings with optional external enhancement
 - `project_detector.py` — git remote → project slug auto-detection
-- `config_v2.py` — zero-config loader, 4 optional env vars
+- `config_v2.py` — zero-config local runtime loader
 - `types_v2.py` — shared dataclasses (MemoryRow, BriefingData)
 
 ## Skills

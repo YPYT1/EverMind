@@ -12,7 +12,7 @@ The suite covers:
 - JSON/TOML template parsing;
 - built-in engine defaults with no external engine switches;
 - env and unified `config/evermind.example.yaml`;
-- docs for components, architecture, and local-to-cloud roadmap;
+- docs for components, architecture, and the local-only runtime boundary;
 - docs for MCP tools and the non-expert user journey;
 - public template path hygiene;
 - `scripts/common/render-configs.py`;
